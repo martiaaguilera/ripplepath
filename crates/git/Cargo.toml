@@ -1,0 +1,19 @@
+[package]
+name = "ripplepath-git"
+description = "Read-only Git access for Ripplepath: revisions, trees, blobs and line diffs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+gix.workspace = true
+imara-diff.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
