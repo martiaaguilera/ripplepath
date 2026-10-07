@@ -240,6 +240,19 @@ fn overloads_with_same_arity_are_inferred_not_exact() {
 }
 
 #[test]
+fn hostile_nesting_does_not_overflow_the_stack() {
+    // A 100k-segment qualified type nests 100k levels deep in the syntax tree.
+    let qualified = format!("{}B", "a.".repeat(100_000));
+    let src = format!("class X {{ {qualified} f; void m({qualified} p) {{ {qualified} local = ({qualified}) p; }} }}");
+    let file = java::extract("X.java", &src, Duration::from_secs(60)).unwrap();
+    assert_eq!(file.types.len(), 1);
+
+    let parens = format!("class Y {{ int f = {}1{}; }}", "(".repeat(20_000), ")".repeat(20_000));
+    let file = java::extract("Y.java", &parens, Duration::from_secs(60)).unwrap();
+    assert_eq!(file.types[0].fields.len(), 1);
+}
+
+#[test]
 fn syntax_errors_are_recorded() {
     let src = "package p;\nclass Broken {\n  void f( {\n}\n";
     let file = java::extract("p/Broken.java", src, BUDGET).unwrap();

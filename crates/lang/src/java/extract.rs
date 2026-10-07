@@ -435,21 +435,38 @@ fn is_type_node(kind: &str) -> bool {
 
 /// Erased, dotted type name, or `None` for primitives/void/`var` which never resolve to a symbol.
 fn erase(node: Node<'_>, source: &str) -> Option<String> {
+    erase_bounded(node, source, 0)
+}
+
+/// Qualified type names nest left-recursively (`a.b.c.D` is four levels), so the recursion depth is
+/// attacker-controlled. Real names are a handful of segments; anything deeper than the receiver
+/// limit is treated as unresolvable rather than risking a stack overflow.
+fn erase_bounded(node: Node<'_>, source: &str, depth: usize) -> Option<String> {
+    if depth > MAX_RECEIVER_DEPTH {
+        return None;
+    }
+    let next = depth + 1;
     match node.kind() {
         "type_identifier" => {
             let name = text(node, source);
             (name != "var").then(|| name.to_owned())
         }
         "scoped_type_identifier" => {
-            let parts: Vec<String> = named_children(node).into_iter().filter_map(|n| erase(n, source)).collect();
+            let mut parts = Vec::new();
+            for child in named_children(node) {
+                if matches!(child.kind(), "annotation" | "marker_annotation") {
+                    continue;
+                }
+                parts.push(erase_bounded(child, source, next)?);
+            }
             (!parts.is_empty()).then(|| parts.join("."))
         }
         "generic_type" => named_children(node)
             .into_iter()
             .find(|n| matches!(n.kind(), "type_identifier" | "scoped_type_identifier"))
-            .and_then(|n| erase(n, source)),
-        "array_type" => node.child_by_field_name("element").and_then(|n| erase(n, source)),
-        "annotated_type" => named_children(node).into_iter().last().and_then(|n| erase(n, source)),
+            .and_then(|n| erase_bounded(n, source, next)),
+        "array_type" => node.child_by_field_name("element").and_then(|n| erase_bounded(n, source, next)),
+        "annotated_type" => named_children(node).into_iter().last().and_then(|n| erase_bounded(n, source, next)),
         _ => None,
     }
 }
@@ -463,7 +480,12 @@ fn type_use(node: Node<'_>, source: &str) -> Option<TypeUse> {
 fn signature_text(node: Node<'_>, source: &str) -> String {
     match node.kind() {
         "array_type" => {
-            let element = node.child_by_field_name("element").map(|n| signature_text(n, source)).unwrap_or_default();
+            // The element of an array type is never itself an array type in this grammar (extra
+            // dimensions live in `dimensions`), so this does not recurse further.
+            let element = node
+                .child_by_field_name("element")
+                .map(|n| erase(n, source).unwrap_or_else(|| compact(text(n, source))))
+                .unwrap_or_default();
             let dims = node.child_by_field_name("dimensions").map_or(1, |d| text(d, source).matches('[').count());
             format!("{element}{}", "[]".repeat(dims))
         }

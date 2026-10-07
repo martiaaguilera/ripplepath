@@ -10,6 +10,27 @@ use ripplepath_graph::Hop;
 const LIST_LIMIT: usize = 25;
 
 pub fn render(report: &AnalysisReport) -> String {
+    neutralize_terminal_controls(&render_raw(report))
+}
+
+/// Symbol names, paths and revision specs come from the analysed repository or the command line.
+/// Escape sequences in them could rewrite the terminal (ANSI/OSC) or visually reorder text
+/// (Unicode bidi overrides, "Trojan Source"), so every control and bidi-formatting character except
+/// newline is shown as a visible `\u{..}` escape instead.
+pub fn neutralize_terminal_controls(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        let bidi = matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
+        if (c.is_control() && c != '\n') || bidi {
+            out.push_str(&format!("\\u{{{:x}}}", c as u32));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn render_raw(report: &AnalysisReport) -> String {
     let mut out = String::new();
     let s = &report.summary;
     let short = |commit: &Option<String>, spec: &str| {
@@ -131,5 +152,20 @@ fn display(id: &SymbolId) -> String {
     match member {
         Some(member) => format!("{short}#{member}"),
         None => short,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::neutralize_terminal_controls;
+
+    #[test]
+    fn escapes_ansi_and_bidi_but_keeps_newlines_and_unicode() {
+        let hostile = "ok\n\u{1b}[31mred\u{1b}[0m \u{202e}evil\u{2066} ünïcode";
+        assert_eq!(
+            neutralize_terminal_controls(hostile),
+            r"ok
+\u{1b}[31mred\u{1b}[0m \u{202e}evil\u{2066} ünïcode"
+        );
     }
 }
