@@ -1,0 +1,24 @@
+[package]
+name = "ripplepath-engine"
+description = "Ripplepath analysis pipeline: snapshots, semantic change sets, impact and reports"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ripplepath-core.workspace = true
+ripplepath-git.workspace = true
+ripplepath-graph.workspace = true
+ripplepath-lang.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

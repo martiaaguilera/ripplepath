@@ -1,0 +1,135 @@
+//! Human-readable report. Plain text, no colour: it is read in terminals, CI logs and pasted into
+//! PRs, and colour codes would corrupt the latter two.
+
+use std::fmt::Write;
+
+use ripplepath_core::SymbolId;
+use ripplepath_engine::{AnalysisReport, ChangeKind, Severity, TestReason};
+use ripplepath_graph::Hop;
+
+const LIST_LIMIT: usize = 25;
+
+pub fn render(report: &AnalysisReport) -> String {
+    let mut out = String::new();
+    let s = &report.summary;
+    let short = |commit: &Option<String>, spec: &str| {
+        commit.as_deref().map_or_else(|| spec.to_owned(), |c| format!("{spec} ({})", &c[..c.len().min(10)]))
+    };
+    let _ = writeln!(out, "Ripplepath change analysis");
+    let _ = writeln!(out, "  base  {}", short(&report.base.commit, &report.base.spec));
+    let _ = writeln!(out, "  head  {}", short(&report.head.commit, &report.head.spec));
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "Files changed {}  |  symbols changed {}  |  impacted {} across {} module(s)  |  tests {} of {}",
+        s.files_changed, s.symbols_changed, s.symbols_impacted, s.modules_impacted, s.tests_recommended, s.tests_total
+    );
+    if s.impact_truncated {
+        let _ = writeln!(out, "NOTE: impact traversal was truncated; the impacted set is a lower bound.");
+    }
+
+    section(&mut out, "Changed symbols");
+    for symbol in report.changed_symbols.iter().take(LIST_LIMIT) {
+        let label = match symbol.change {
+            ChangeKind::Added => "added",
+            ChangeKind::Deleted => "deleted",
+            ChangeKind::Modified => "modified",
+            ChangeKind::SignatureChanged => "signature",
+        };
+        let _ = writeln!(out, "  {label:<9} {}  ({}:{})", display(&symbol.id), symbol.file, symbol.span.start_line);
+        if let Some(previous) = &symbol.previous_id {
+            let _ = writeln!(out, "            was {}", display(previous));
+        }
+        if let Some(moved) = &symbol.probable_move {
+            let _ = writeln!(out, "            identical body to {} (probable move)", display(moved));
+        }
+    }
+    more(&mut out, report.changed_symbols.len());
+
+    section(&mut out, "Recommended tests (static evidence only; not a guarantee of coverage)");
+    if report.tests.is_empty() {
+        let _ = writeln!(out, "  none found — no test has a static dependency path to the change");
+    }
+    for test in report.tests.iter().take(LIST_LIMIT) {
+        match test.reason {
+            TestReason::ChangedTest => {
+                let _ = writeln!(out, "  {}  — test itself changed", display(&test.id));
+            }
+            TestReason::StaticPath => {
+                let _ = writeln!(
+                    out,
+                    "  {}  — depth {}, weakest evidence {:?}",
+                    display(&test.id),
+                    test.depth,
+                    test.weakest_evidence
+                );
+                let _ = writeln!(out, "      changed      {}", display(&test.root));
+                path(&mut out, &test.path);
+            }
+        }
+    }
+    more(&mut out, report.tests.len());
+
+    section(&mut out, "Impacted symbols");
+    for symbol in report.impacted_symbols.iter().filter(|s| !s.is_test).take(LIST_LIMIT) {
+        let _ = writeln!(out, "  d{} {}  ({:?})", symbol.depth, display(&symbol.id), symbol.weakest_evidence);
+    }
+    more(&mut out, report.impacted_symbols.iter().filter(|s| !s.is_test).count());
+
+    section(&mut out, "Uncertainty");
+    if report.uncertainty.is_empty() {
+        let _ = writeln!(out, "  none recorded");
+    }
+    for item in report.uncertainty.iter().take(LIST_LIMIT) {
+        let severity = match item.severity {
+            Severity::High => "HIGH",
+            Severity::Medium => "MED ",
+            Severity::Low => "LOW ",
+        };
+        let location = match (&item.file, item.line) {
+            (Some(file), Some(line)) => format!("{file}:{line}: "),
+            (Some(file), None) => format!("{file}: "),
+            _ => String::new(),
+        };
+        let _ = writeln!(out, "  {severity} {location}{}", item.detail);
+    }
+    more(&mut out, report.uncertainty.len());
+    out
+}
+
+fn section(out: &mut String, title: &str) {
+    let _ = writeln!(out, "\n{title}");
+}
+
+fn more(out: &mut String, total: usize) {
+    if total > LIST_LIMIT {
+        let _ = writeln!(out, "  ... {} more (use --format json for everything)", total - LIST_LIMIT);
+    }
+}
+
+fn path(out: &mut String, hops: &[Hop]) {
+    for hop in hops {
+        let relation = if hop.via_dispatch {
+            "dispatched via OVERRIDES".to_owned()
+        } else {
+            format!("{:?}", hop.edge.kind).to_uppercase()
+        };
+        let _ = writeln!(out, "      ← {relation:<12} {}  ({}:{})", display(&hop.symbol), hop.edge.file, hop.edge.line);
+    }
+}
+
+/// `java:com.acme.bank.domain.Account#withdraw(Money)` → `domain.Account#withdraw(Money)`: the
+/// package prefix is mostly noise in a terminal; JSON output keeps full ids.
+fn display(id: &SymbolId) -> String {
+    let raw = id.as_str();
+    let body = raw.split_once(':').map_or(raw, |(_, rest)| rest);
+    let (qualified, member) = body.split_once('#').map_or((body, None), |(q, m)| (q, Some(m)));
+    let segments: Vec<&str> = qualified.split('.').collect();
+    let first_type = segments.iter().position(|s| s.chars().next().is_some_and(char::is_uppercase)).unwrap_or(0);
+    let start = first_type.saturating_sub(1);
+    let short = segments[start..].join(".");
+    match member {
+        Some(member) => format!("{short}#{member}"),
+        None => short,
+    }
+}
