@@ -61,6 +61,7 @@ cargo build --release
 ./target/release/ripplepath demo                       # builds a Java fixture repo and analyses it
 ./target/release/ripplepath demo --fixture typescript-checkout --dir ts-demo
 ./target/release/ripplepath analyze --repo . --base main --head HEAD --format json > analysis.json
+./target/release/ripplepath index --repo . --rev HEAD   # persistent, incremental index in .ripplepath/
 
 cd web && npm ci && npm run build && cd ..
 ./target/release/ripplepath serve --repo ripplepath-demo --base main~1 --head main
@@ -92,8 +93,7 @@ Details: [docs/SPEC.md](docs/SPEC.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.
 
 ## Roadmap (not implemented yet)
 
-SQLite persistence and incremental index (with an
-incremental == clean-rebuild invariant) · JaCoCo/LCOV/JUnit evidence · test ranking modes with safe
+JaCoCo/LCOV/JUnit evidence · test ranking modes with safe
 fallback · architecture rules and base/head drift · versioned deterministic risk decomposition ·
 GitHub Action with step summary and SARIF · flakiness and offline selection evaluation ·
 benchmarks · read-only MCP server.

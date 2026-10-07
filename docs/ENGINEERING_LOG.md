@@ -2,6 +2,15 @@
 
 Meaningful discoveries only, newest first.
 
+## 2026-10-07 — Session 3: persistent incremental index
+
+**Incremental facts, recomputed resolution.** Resolution depends on every file's imports, so the
+honest incremental unit is per-file *facts*; the stored graph is updated by difference. ADR 0004.
+
+**A test that cannot fail proves nothing, again.** The incremental-equals-clean property test was
+mutation-checked: disabling deletion of stale edges in `apply_graph` makes both the fixture test and
+the random-history property test fail.
+
 ## 2026-10-07 — Session 2: TypeScript frontend
 
 **First CI run failed on a local blind spot.** `playwright.config.ts` was added after the last local

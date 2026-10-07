@@ -98,7 +98,14 @@ version ⇒ byte-identical JSON. `analysis.json` carries `schema_version`.
 - `summary.tests_recommended` counts test *units* selected: listed units plus all units inside a
   listed container; `summary.tests_total` counts all test units in head.
 
-## 8. Planned sections
-Incremental index invariants, test evidence and ranking, fallback rules,
+## 8. Persistent incremental index [implemented]
+- `ripplepath index --rev R` stores the graph of R in SQLite (`.ripplepath/index.db` by default).
+- Facts are cached per (blob id, path, extractor version); only changed files are parsed.
+- Resolution runs over the whole snapshot; stored rows are updated by difference and the run
+  reports the delta (symbols/edges added, removed, updated).
+- **Invariant**: after any sequence of index runs, stored rows equal a clean index of the final
+  revision. `analyze --db` with a warm cache produces byte-identical output to a cold run.
+
+## 9. Planned sections, test evidence and ranking, fallback rules,
 architecture rules and delta, risk model v1, GitHub Action, history/flakiness, replay evaluation.
 Each will be specified here as it is implemented.

@@ -20,12 +20,13 @@ Status: Java and TypeScript/JavaScript frontends. Planned components are marked 
 | `git` | Open repo (isolated config), resolve revisions, list trees, read blobs with size cap, path validation, line diff, rename pairing. | object DB only |
 | `lang` | Language frontends `java` and `ts`, each `extract` (per file, pure) + `resolve` (per snapshot, pure). Languages resolve independently; no cross-language edges. | none |
 | `graph` | `CodeGraph` (sorted edges, adjacency indices) and `impact` (BFS with explaining paths). | none |
+| `storage` | SQLite: migrations, persistent fact cache, indexed graph updated by difference. | one DB file |
 | `engine` | Orchestration: snapshots, fact cache, change classification, hunks, uncertainty, report. | via `git` |
 | `cli` | `ripplepath analyze | serve | demo`. Text renderer neutralises terminal control characters. | stdout/files |
 | `server` | Axum API `/api/v1/*` + static UI, Host validation, CSP, bounded analysis concurrency. | HTTP |
 | `web/` | React + TypeScript strict UI. Renders the report; never infers relationships. | HTTP |
 
-Planned: `storage` (SQLite persistence of facts/graphs/runs), `tests` evidence ingestion
+Planned: `tests` evidence ingestion
 (JaCoCo/LCOV/JUnit), `risk`, `mcp`.
 
 ## Two-phase language frontends
