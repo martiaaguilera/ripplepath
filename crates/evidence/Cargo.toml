@@ -1,0 +1,16 @@
+[package]
+name = "ripplepath-evidence"
+description = "Parsers for test evidence: JaCoCo XML, LCOV, JUnit XML"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+quick-xml.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
