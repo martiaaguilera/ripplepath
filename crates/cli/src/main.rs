@@ -40,6 +40,10 @@ enum Command {
         base: String,
         #[arg(long, default_value = "HEAD")]
         head: String,
+        /// Additional Host header value to accept (repeatable). Loopback names are always accepted;
+        /// everything else is refused to block DNS-rebinding attacks from web pages.
+        #[arg(long = "allow-host")]
+        allowed_hosts: Vec<String>,
     },
     /// Build the bundled demo repository and analyse its change.
     Demo {
@@ -113,7 +117,7 @@ fn run(command: Command) -> Result<(), String> {
             let report = analyze(&options).map_err(|e| e.to_string())?;
             emit(&report, args.format, args.output.as_deref())
         }
-        Command::Serve { repo, addr, web_dir, base, head } => {
+        Command::Serve { repo, addr, web_dir, base, head, allowed_hosts } => {
             if !addr.ip().is_loopback() {
                 eprintln!("warning: listening on {addr}; anyone who can reach it can read analysed source metadata");
             }
@@ -127,8 +131,14 @@ fn run(command: Command) -> Result<(), String> {
                 None
             };
             eprintln!("Ripplepath listening on http://{addr}");
-            let config =
-                ripplepath_server::ServerConfig { repo, addr, web_dir, default_base: base, default_head: head };
+            let config = ripplepath_server::ServerConfig {
+                repo,
+                addr,
+                web_dir,
+                default_base: base,
+                default_head: head,
+                allowed_hosts,
+            };
             let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
             runtime.block_on(ripplepath_server::serve(config)).map_err(|e| e.to_string())
         }

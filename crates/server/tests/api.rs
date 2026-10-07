@@ -10,12 +10,17 @@ use ripplepath_server::{ServerConfig, router};
 use tower::ServiceExt;
 
 fn app(repo: &Path) -> axum::Router {
+    app_with_hosts(repo, Vec::new())
+}
+
+fn app_with_hosts(repo: &Path, allowed_hosts: Vec<String>) -> axum::Router {
     router(ServerConfig {
         repo: repo.to_owned(),
         addr: "127.0.0.1:0".parse().unwrap(),
         web_dir: None,
         default_base: "main~1".to_owned(),
         default_head: "main".to_owned(),
+        allowed_hosts,
     })
 }
 
@@ -27,7 +32,19 @@ fn banking_repo() -> tempfile::TempDir {
 }
 
 async fn get(app: axum::Router, uri: &str) -> (StatusCode, axum::http::HeaderMap, serde_json::Value) {
-    let response = app.oneshot(Request::get(uri).body(Body::empty()).unwrap()).await.unwrap();
+    get_with_host(app, uri, Some("localhost:7878")).await
+}
+
+async fn get_with_host(
+    app: axum::Router,
+    uri: &str,
+    host: Option<&str>,
+) -> (StatusCode, axum::http::HeaderMap, serde_json::Value) {
+    let mut request = Request::get(uri);
+    if let Some(host) = host {
+        request = request.header(header::HOST, host);
+    }
+    let response = app.oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
     let status = response.status();
     let headers = response.headers().clone();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
@@ -71,4 +88,26 @@ async fn control_characters_in_revisions_are_rejected() {
     let (status, _, body) = get(app(repo.path()), "/api/v1/analysis?base=main%0A&head=main").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"]["code"], "bad_request");
+}
+
+#[tokio::test]
+async fn dns_rebinding_hosts_are_rejected() {
+    let repo = banking_repo();
+    for host in [Some("attacker.example"), Some("attacker.example:7878"), Some("127.0.0.1.attacker.example"), None] {
+        let (status, _, body) = get_with_host(app(repo.path()), "/api/v1/analysis", host).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{host:?}");
+        assert_eq!(body["error"]["code"], "forbidden");
+    }
+    for host in ["localhost", "LOCALHOST:7878", "127.0.0.1:7878", "[::1]:7878"] {
+        let (status, _, _) = get_with_host(app(repo.path()), "/api/v1/health", Some(host)).await;
+        assert_eq!(status, StatusCode::OK, "{host}");
+    }
+}
+
+#[tokio::test]
+async fn explicitly_allowed_hosts_are_accepted() {
+    let repo = banking_repo();
+    let app = app_with_hosts(repo.path(), vec!["devbox.lan".to_owned()]);
+    let (status, _, _) = get_with_host(app, "/api/v1/health", Some("devbox.lan:7878")).await;
+    assert_eq!(status, StatusCode::OK);
 }

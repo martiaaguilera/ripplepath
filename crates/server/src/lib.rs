@@ -8,8 +8,9 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::extract::{Query, State};
+use axum::extract::{Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
@@ -32,18 +33,23 @@ pub struct ServerConfig {
     pub web_dir: Option<PathBuf>,
     pub default_base: String,
     pub default_head: String,
+    /// Extra `Host` header values to accept besides loopback names (e.g. a LAN hostname when
+    /// deliberately binding beyond localhost). Compared without the port, case-insensitively.
+    pub allowed_hosts: Vec<String>,
 }
 
 struct AppState {
     config: ServerConfig,
-    permits: Semaphore,
+    permits: Arc<Semaphore>,
 }
 
 pub fn router(config: ServerConfig) -> Router {
     let web_dir = config.web_dir.clone();
-    let state = Arc::new(AppState { config, permits: Semaphore::new(MAX_CONCURRENT_ANALYSES) });
-    let api =
-        Router::new().route("/api/v1/health", get(health)).route("/api/v1/analysis", get(analysis)).with_state(state);
+    let state = Arc::new(AppState { config, permits: Arc::new(Semaphore::new(MAX_CONCURRENT_ANALYSES)) });
+    let api = Router::new()
+        .route("/api/v1/health", get(health))
+        .route("/api/v1/analysis", get(analysis))
+        .with_state(Arc::clone(&state));
 
     let app = match web_dir {
         Some(dir) => {
@@ -54,15 +60,51 @@ pub fn router(config: ServerConfig) -> Router {
     };
     // Source code from the analysed repository is rendered by the UI; a strict CSP means a
     // rendering bug cannot turn a crafted identifier into script execution.
-    app.layer(SetResponseHeaderLayer::overriding(
-        header::CONTENT_SECURITY_POLICY,
-        HeaderValue::from_static(
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
+    app.layer(middleware::from_fn_with_state(state, require_known_host))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
              connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
-        ),
-    ))
-    .layer(SetResponseHeaderLayer::overriding(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))
-    .layer(SetResponseHeaderLayer::overriding(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")))
+            ),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))
+        .layer(SetResponseHeaderLayer::overriding(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")))
+}
+
+/// Rejects requests whose `Host` is not a loopback name or an explicitly allowed host.
+///
+/// Binding to 127.0.0.1 does not stop a web page from reaching the server: with DNS rebinding,
+/// `attacker.example` first resolves to the attacker and then to 127.0.0.1, and the browser treats
+/// the API as same-origin for the attacker's page. The `Host` header still says
+/// `attacker.example`, so checking it closes that hole.
+async fn require_known_host(State(state): State<Arc<AppState>>, request: Request, next: Next) -> Response {
+    let host = request.headers().get(header::HOST).and_then(|h| h.to_str().ok()).map(host_without_port);
+    let allowed = match host {
+        Some(host) => {
+            matches!(host.to_ascii_lowercase().as_str(), "localhost" | "127.0.0.1" | "[::1]")
+                || state.config.allowed_hosts.iter().any(|h| h.eq_ignore_ascii_case(host))
+        }
+        None => false,
+    };
+    if allowed {
+        next.run(request).await
+    } else {
+        tracing::warn!(host = ?host, "rejected request with unexpected Host header");
+        ApiError::Forbidden("unexpected Host header; start the server with --allow-host to permit it".to_owned())
+            .into_response()
+    }
+}
+
+fn host_without_port(host: &str) -> &str {
+    if host.starts_with('[') {
+        // IPv6 literal: `[::1]:7878`
+        return host.find(']').map_or(host, |end| &host[..=end]);
+    }
+    match host.rsplit_once(':') {
+        Some((name, port)) if port.chars().all(|c| c.is_ascii_digit()) => name,
+        _ => host,
+    }
 }
 
 pub async fn serve(config: ServerConfig) -> std::io::Result<()> {
@@ -106,6 +148,8 @@ enum ApiError {
     #[error("{0}")]
     BadRequest(String),
     #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
     NotFound(String),
     #[error("{0}")]
     Internal(String),
@@ -126,6 +170,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code) = match &self {
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
+            Self::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
             Self::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
             Self::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         };
@@ -150,11 +195,17 @@ async fn analysis(
 ) -> Result<Response, ApiError> {
     let base = validate_revision(query.base.as_deref().unwrap_or(&state.config.default_base))?.to_owned();
     let head = validate_revision(query.head.as_deref().unwrap_or(&state.config.default_head))?.to_owned();
-    let _permit = state.permits.acquire().await.map_err(|e| ApiError::Internal(e.to_string()))?;
+    let permit = Arc::clone(&state.permits).acquire_owned().await.map_err(|e| ApiError::Internal(e.to_string()))?;
     let options = AnalyzeOptions::new(&state.config.repo, base, head);
-    let result = tokio::task::spawn_blocking(move || analyze(&options))
-        .await
-        .map_err(|e| ApiError::Internal(format!("analysis task failed: {e}")))?;
+    // The permit moves into the blocking task. If it stayed in this future, a client that
+    // disconnects would drop the future and release the permit while the analysis keeps running,
+    // letting connect/disconnect loops start unbounded concurrent analyses.
+    let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        analyze(&options)
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("analysis task failed: {e}")))?;
     match result {
         Ok(report) => Ok(Json(report).into_response()),
         Err(AnalysisError::Git(error @ GitError::RevisionNotFound { .. })) => {
