@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+authors = ["Martí Aguilera"]
+repository = "https://github.com/martiaaguilera/ripplepath"
+
+[workspace.dependencies]
+ripplepath-core = { path = "crates/core" }
+ripplepath-git = { path = "crates/git" }
+ripplepath-lang = { path = "crates/lang" }
+ripplepath-graph = { path = "crates/graph" }
+ripplepath-engine = { path = "crates/engine" }
+
+blake3 = "1.8.7"
+clap = { version = "4.6.7", features = ["derive"] }
+gix = { version = "0.88.0", default-features = false, features = ["revision", "sha1"] }
+imara-diff = "0.2.0"
+rayon = "1.12.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+tree-sitter = "0.27.0"
+tree-sitter-java = "0.23.5"
+proptest = "1.11.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+dbg_macro = "warn"
+
+[profile.release]
+debug = "line-tables-only"
