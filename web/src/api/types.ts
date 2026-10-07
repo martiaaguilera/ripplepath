@@ -30,7 +30,11 @@ export type SymbolKind =
   | "annotation"
   | "method"
   | "constructor"
-  | "field";
+  | "field"
+  | "function"
+  | "variable"
+  | "type_alias"
+  | "test_case";
 
 export type ChangeKind = "ADDED" | "DELETED" | "MODIFIED" | "SIGNATURE_CHANGED";
 
@@ -87,7 +91,7 @@ export interface FileChange {
   old_path: string | null;
   status: "ADDED" | "DELETED" | "MODIFIED" | "RENAMED";
   similarity: number | null;
-  language: "java" | "typescript" | null;
+  language: "java" | "typescript" | "javascript" | null;
   hunks: HunkReport[];
 }
 
@@ -98,7 +102,7 @@ export interface ChangedSymbol {
   probable_move: string | null;
   kind: SymbolKind;
   name: string;
-  language: "java" | "typescript";
+  language: "java" | "typescript" | "javascript";
   module: string;
   file: string;
   span: Span;

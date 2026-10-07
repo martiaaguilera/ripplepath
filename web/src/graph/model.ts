@@ -46,12 +46,23 @@ export function edgeKey(edge: Pick<Edge, "from" | "to" | "kind">): string {
   return `${edge.from}|${edge.to}|${edge.kind}`;
 }
 
-/** `java:com.acme.bank.domain.Account#withdraw(Money)` → `Account.withdraw(Money)`. */
+/**
+ * Short display label:
+ * - `java:com.acme.bank.domain.Account#withdraw(Money)` → `Account.withdraw(Money)`
+ * - `ts:src/cart.ts#Cart.total` → `Cart.total`; test cases keep their title
+ * - `file:src/main/java/A.java` → `A.java`
+ */
 export function shortLabel(id: string): string {
-  const body = id.includes(":") ? id.slice(id.indexOf(":") + 1) : id;
-  const [qualified = body, member] = body.split("#", 2);
-  if (id.startsWith("file:")) {
-    return qualified.split("/").pop() ?? qualified;
+  const colon = id.indexOf(":");
+  const prefix = colon >= 0 ? id.slice(0, colon) : "";
+  const body = colon >= 0 ? id.slice(colon + 1) : id;
+  const hash = body.indexOf("#");
+  const qualified = hash >= 0 ? body.slice(0, hash) : body;
+  const member = hash >= 0 ? body.slice(hash + 1) : undefined;
+  if (prefix === "file") return qualified.split("/").pop() ?? qualified;
+  if (prefix === "ts") {
+    if (member === undefined) return qualified.split("/").pop() ?? qualified;
+    return member.startsWith("test:") ? member.slice("test:".length) : member;
   }
   const owner = qualified.split(".").pop() ?? qualified;
   if (member === undefined) return owner;

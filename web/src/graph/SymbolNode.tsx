@@ -15,6 +15,10 @@ const KIND_GLYPH: Record<ViewNode["kind"], string> = {
   method: "m",
   constructor: "c",
   field: "f",
+  function: "ƒ",
+  variable: "v",
+  type_alias: "T",
+  test_case: "t",
 };
 
 function roleClass(node: ViewNode): string {

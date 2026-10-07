@@ -10,6 +10,8 @@ describe("shortLabel", () => {
     expect(shortLabel("java:com.acme.bank.domain.Money#<init>(BigDecimal,String)")).toBe("Money(BigDecimal,String)");
     expect(shortLabel("java:com.acme.bank.domain.Money")).toBe("Money");
     expect(shortLabel("file:src/main/java/A.java")).toBe("A.java");
+    expect(shortLabel("ts:src/cart.ts#Cart.total")).toBe("Cart.total");
+    expect(shortLabel("ts:src/cart.test.ts#test:Cart > totals")).toBe("Cart > totals");
   });
 });
 
