@@ -1,6 +1,6 @@
 # Architecture
 
-Status: first vertical slice (Java only). Planned components are marked as such.
+Status: Java and TypeScript/JavaScript frontends. Planned components are marked as such.
 
 ```
                       ┌──────────────────── ripplepath-engine ───────────────────┐
@@ -18,7 +18,7 @@ Status: first vertical slice (Java only). Planned components are marked as such.
 |---|---|---|
 | `core` | `SymbolId`, `Symbol`, `Edge`, `EdgeKind`, `Evidence`, `Fingerprint`. Plain data with total orderings. | none |
 | `git` | Open repo (isolated config), resolve revisions, list trees, read blobs with size cap, path validation, line diff, rename pairing. | object DB only |
-| `lang` | Language frontends. `java::extract` (per file, pure) and `java::resolve` (per snapshot, pure). | none |
+| `lang` | Language frontends `java` and `ts`, each `extract` (per file, pure) + `resolve` (per snapshot, pure). Languages resolve independently; no cross-language edges. | none |
 | `graph` | `CodeGraph` (sorted edges, adjacency indices) and `impact` (BFS with explaining paths). | none |
 | `engine` | Orchestration: snapshots, fact cache, change classification, hunks, uncertainty, report. | via `git` |
 | `cli` | `ripplepath analyze | serve | demo`. Text renderer neutralises terminal control characters. | stdout/files |

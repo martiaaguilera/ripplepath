@@ -27,7 +27,8 @@ test evidence → architecture delta → deterministic risk decomposition. Owner
 
 ## Workflow
 - Tests before declaring anything done: `cargo test --workspace`, `cargo clippy --workspace -- -D warnings`,
-  `cargo fmt --check`, and in `web/`: `npm run typecheck && npm run lint && npm test`.
+  `cargo fmt --check`, and in `web/`: `npm run typecheck && npm run lint && npm test` (re-run them
+  after adding *any* file under web/: config files are typechecked too).
 - Update docs/SPEC.md, docs/ARCHITECTURE.md, docs/ENGINEERING_LOG.md when semantics/design change.
 - Conventional Commits. Real coherent commits only.
 - On Windows the cargo bin dir may not be on PATH in fresh shells: prepend `$env:USERPROFILE\.cargo\bin`.

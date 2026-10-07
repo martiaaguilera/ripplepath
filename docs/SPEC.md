@@ -15,7 +15,8 @@ A symbol is a named program element with a **stable identity**:
 <lang>:<qualified-name>[#<member>[(<param types>)]]
 java:com.acme.billing.BillingService#charge(Money,String)
 java:com.acme.billing.BillingService
-ts:src/checkout/cart.ts#Cart.total            [planned]
+ts:src/checkout/cart.ts#Cart.total
+ts:src/cart.test.ts#test:Cart > totals line items
 ```
 
 Identity is built from language, qualified name, kind-specific member name and — for Java methods and
@@ -28,8 +29,11 @@ Consequences (documented limitations):
 - Parameter types are textual: `List<String>` and `java.util.List<Integer>` erase to `List` and
   `java.util.List` respectively; a qualified vs. simple spelling change is reported as a signature change.
 
-Kinds: `package`, `file`, `class`, `interface`, `enum`, `record`, `annotation`, `method`, `constructor`,
-`field`, `test` (a method that is a recognized test) [implemented for Java].
+Kinds: `file`, `class`, `interface`, `enum`, `record`, `annotation`, `method`, `constructor`, `field`,
+`function`, `variable`, `type_alias`, `test_case` [implemented]. A Java test is a `method` with
+`is_test`; a TypeScript test is a `test_case`. Test *containers* are a Java test class or a TS test
+file (`is_test` on a non-unit symbol). Enum values in this contract may gain variants without a
+schema version bump; consumers must tolerate unknown values.
 
 ## 3. Fingerprints and change classification [implemented for Java]
 Each symbol has a fingerprint: BLAKE3 over its tree-sitter leaf tokens, **excluding comments and
@@ -52,7 +56,7 @@ Textual diff hunks (imara-diff, Histogram) are computed per changed file and att
 for display and for mapping lines → enclosing symbol; they are **not** the source of truth for
 "modified".
 
-## 4. Edges [implemented for Java]
+## 4. Edges [implemented for Java and TypeScript]
 Edges are directed `from → to` meaning *from depends on to*. Each edge carries
 `kind`, `evidence`, `file`, `span`, `rule`.
 
@@ -72,7 +76,8 @@ Evidence classes, strongest first: `RESOLVED_EXACT`, `COVERAGE_OBSERVED`, `STATI
 
 ## 5. Impact propagation [implemented]
 Starting from changed symbols, traverse dependents:
-- every non-`CONTAINS` edge is followed in reverse (`x → changed` makes `x` impacted);
+- every edge except `CONTAINS` and `IMPORTS` is followed in reverse (`x → changed` makes `x`
+  impacted). An import alone does not run or name code; its use produces `CALLS`/`REFERENCES`;
 - `OVERRIDES` is *also* followed forward from a changed implementation to the declaration it overrides,
   because callers bound to the declaration may dispatch to the implementation;
 - traversal is breadth-first, depth-bounded (default 6), visits every symbol once, terminates on cycles;
@@ -85,7 +90,15 @@ Starting from changed symbols, traverse dependents:
 Collections that are serialized are `BTreeMap`/sorted `Vec`. Same repo + revisions + config + tool
 version ⇒ byte-identical JSON. `analysis.json` carries `schema_version`.
 
-## 7. Planned sections
-TypeScript indexer, incremental index invariants, test evidence and ranking, fallback rules,
+## 7. Test recommendations [implemented, static evidence only]
+- A test unit is recommended when it changed (`CHANGED_TEST`) or is impacted (`STATIC_PATH`).
+- A test container is recommended when its own code changed, when a non-test symbol inside it
+  (lifecycle hook, fixture, helper) changed or is impacted, or when it is impacted and none of its
+  units is listed.
+- `summary.tests_recommended` counts test *units* selected: listed units plus all units inside a
+  listed container; `summary.tests_total` counts all test units in head.
+
+## 8. Planned sections
+Incremental index invariants, test evidence and ranking, fallback rules,
 architecture rules and delta, risk model v1, GitHub Action, history/flakiness, replay evaluation.
 Each will be specified here as it is implemented.

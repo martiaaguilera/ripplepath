@@ -2,6 +2,33 @@
 
 Meaningful discoveries only, newest first.
 
+## 2026-10-07 — Session 2: TypeScript frontend
+
+**First CI run failed on a local blind spot.** `playwright.config.ts` was added after the last local
+typecheck and needs Node types. CLAUDE.md now says to re-run web checks after adding any file.
+
+**`beforeEach` is not a test, but it is test code.** Suite-level hooks run for every test in the
+file. Their references are attributed to the file symbol, and test files are marked `is_test`, so a
+change can reach "run this whole file". The same gap existed in Java: a modified `@BeforeEach
+setUp()` had no dependents and recommended nothing. Test *containers* are now recommended when shared
+code inside them changes or is impacted (`changed_lifecycle_method_recommends_its_whole_test_class`).
+
+**Adding a `describe` marked the whole test file changed.** The suite wrapper, and even the
+statement's trailing `;`, leaked into the file fingerprint. It now covers only module-level code
+plus suite-level statements.
+
+**IMPORTS should not propagate impact.** With TypeScript every importing file became "impacted",
+flooding the list. Real use of an import already yields CALLS/REFERENCES edges, so IMPORTS (like
+CONTAINS) no longer propagates. Imports remain in the graph as evidence.
+
+**Untyped receivers need a noise filter, not silence.** Reporting every call on an untyped value
+(`items.reduce`, `res.json`) as unresolved would bury real gaps. A call is reported only when its
+member name is declared somewhere in the repository, the case where an edge may truly be missing.
+
+**Interface dispatch matters in TS too.** `Cart.total` calls `this.prices.quote()` on a `PriceSource`
+injected through a constructor parameter property; the change in `PricingService.quote` reaches it
+only through the forward `OVERRIDES` hop to the interface member.
+
 ## 2026-10-07 — Session 1
 
 **Name collision.** "ImpactTrace" is an active software product (impacttrace.io); "Blastline" is an
