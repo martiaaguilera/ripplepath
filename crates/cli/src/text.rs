@@ -20,14 +20,43 @@ pub fn render(report: &AnalysisReport) -> String {
 pub fn neutralize_terminal_controls(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
-        let bidi = matches!(c, '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
-        if (c.is_control() && c != '\n') || bidi {
+        if (c.is_control() && c != '\n') || is_invisible_format(c) {
             out.push_str(&format!("\\u{{{:x}}}", c as u32));
         } else {
             out.push(c);
         }
     }
     out
+}
+
+/// Unicode general category Cf (format: bidi controls, zero-width characters, BOM, tag characters,
+/// …) plus the line/paragraph separators, which some terminals render as line breaks. `std` does
+/// not expose general categories, so the Cf ranges are listed explicitly (Unicode 16).
+fn is_invisible_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061C}'
+            | '\u{06DD}'
+            | '\u{070F}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08E2}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{110BD}'
+            | '\u{110CD}'
+            | '\u{13430}'..='\u{1343F}'
+            | '\u{1BCA0}'..='\u{1BCA3}'
+            | '\u{1D173}'..='\u{1D17A}'
+            | '\u{E0001}'
+            | '\u{E0020}'..='\u{E007F}'
+    )
 }
 
 fn render_raw(report: &AnalysisReport) -> String {
@@ -167,5 +196,11 @@ mod tests {
             r"ok
 \u{1b}[31mred\u{1b}[0m \u{202e}evil\u{2066} ünïcode"
         );
+    }
+
+    #[test]
+    fn escapes_invisible_format_characters_and_separators() {
+        let hostile = "a\u{200b}b\u{061c}c\u{feff}d\u{2028}e\u{e0041}f\u{9b}g";
+        assert_eq!(neutralize_terminal_controls(hostile), r"a\u{200b}b\u{61c}c\u{feff}d\u{2028}e\u{e0041}f\u{9b}g");
     }
 }
