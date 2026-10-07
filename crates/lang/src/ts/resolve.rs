@@ -6,7 +6,8 @@
 //! in-repo `extends`/`implements`, and declared return types for chained calls. Everything else is
 //! either external (packages, globals) or reported as unresolved — never guessed.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use ripplepath_core::{EdgeKind, Evidence, Language, Span, Symbol, SymbolId, SymbolKind, Visibility};
 
@@ -48,9 +49,25 @@ enum ModuleRes<'a> {
     Missing,
 }
 
+/// Per-file lookup tables, so each reference costs a hash lookup instead of a scan.
+#[derive(Default)]
+struct FileMaps<'a> {
+    decls: HashMap<&'a str, usize>,
+    imports: HashMap<&'a str, usize>,
+    local_exports: HashMap<&'a str, usize>,
+    named_exports: HashMap<&'a str, usize>,
+    default_export: Option<usize>,
+}
+
+type Visited<'a> = HashSet<(&'a str, String)>;
+type ExportMemo<'a> = RefCell<HashMap<(&'a str, String), (Val<'a>, Evidence)>>;
+
 struct Index<'a> {
     files: BTreeMap<&'a str, &'a TsFile>,
-    decl_by_name: BTreeMap<&'a str, BTreeMap<&'a str, usize>>,
+    maps: HashMap<&'a str, FileMaps<'a>>,
+    /// Results of top-level export queries. Only complete queries are cached: a result computed
+    /// inside another query may have been cut short by that query's visited set.
+    export_memo: ExportMemo<'a>,
     /// Every member name declared in the repository. A call on an untyped receiver is reported as
     /// unresolved only when its name exists here; `arr.map()` on plain data is not noise-worthy.
     member_names: BTreeSet<&'a str>,
@@ -108,16 +125,28 @@ impl<'a> Index<'a> {
     fn build(files: &[&'a TsFile]) -> Self {
         let mut index = Index {
             files: BTreeMap::new(),
-            decl_by_name: BTreeMap::new(),
+            maps: HashMap::new(),
+            export_memo: RefCell::new(HashMap::new()),
             member_names: BTreeSet::new(),
             class_names: BTreeSet::new(),
         };
         for &file in files {
             index.files.insert(file.path.as_str(), file);
-            let names = index.decl_by_name.entry(file.path.as_str()).or_default();
+            let maps = index.maps.entry(file.path.as_str()).or_default();
+            for (i, import) in file.imports.iter().enumerate() {
+                maps.imports.entry(import.local.as_str()).or_insert(i);
+            }
+            for (i, export) in file.local_exports.iter().enumerate() {
+                maps.local_exports.entry(export.exported.as_str()).or_insert(i);
+            }
             for (i, decl) in file.decls.iter().enumerate() {
                 // Declaration merging (`interface X` + `class X`) keeps the first: one identity.
-                names.entry(decl.name.as_str()).or_insert(i);
+                maps.decls.entry(decl.name.as_str()).or_insert(i);
+                if decl.exported && decl.default_export {
+                    maps.default_export.get_or_insert(i);
+                } else if decl.exported {
+                    maps.named_exports.entry(decl.name.as_str()).or_insert(i);
+                }
                 if decl.kind == SymbolKind::Class {
                     index.class_names.insert(decl.name.as_str());
                 }
@@ -152,39 +181,80 @@ impl<'a> Index<'a> {
             .map_or(ModuleRes::Missing, |f| ModuleRes::File(f))
     }
 
+    fn maps(&self, file: &TsFile) -> Option<&FileMaps<'a>> {
+        self.maps.get(file.path.as_str())
+    }
+
     fn decl_index(&self, file: &TsFile, name: &str) -> Option<usize> {
-        self.decl_by_name.get(file.path.as_str()).and_then(|m| m.get(name)).copied()
+        self.maps(file).and_then(|m| m.decls.get(name)).copied()
     }
 
     /// A name bound at module level: a declaration or an import.
-    fn binding(&self, file: &'a TsFile, name: &str, hops: usize) -> Option<(Val<'a>, Evidence)> {
+    fn binding(&self, file: &'a TsFile, name: &str) -> Option<(Val<'a>, Evidence)> {
+        self.binding_inner(file, name, 0, None)
+    }
+
+    fn binding_inner(
+        &self,
+        file: &'a TsFile,
+        name: &str,
+        hops: usize,
+        visited: Option<&mut Visited<'a>>,
+    ) -> Option<(Val<'a>, Evidence)> {
         if let Some(i) = self.decl_index(file, name) {
             return Some((Val::Decl(file, i), Evidence::ResolvedExact));
         }
-        let import = file.imports.iter().find(|i| i.local == name)?;
+        let import = &file.imports[*self.maps(file)?.imports.get(name)?];
         Some(match self.module(&file.path, &import.source) {
             ModuleRes::External => (Val::External, Evidence::ResolvedExact),
             ModuleRes::Missing => (Val::Unknown, Evidence::ResolvedExact),
-            ModuleRes::File(target) => match &import.imported {
-                Imported::Namespace => (Val::Namespace(target), Evidence::ResolvedExact),
-                Imported::Default => self.export(target, "default", hops + 1),
-                Imported::Named(n) => self.export(target, n, hops + 1),
-            },
+            ModuleRes::File(target) => {
+                let exported = match &import.imported {
+                    Imported::Namespace => return Some((Val::Namespace(target), Evidence::ResolvedExact)),
+                    Imported::Default => "default",
+                    Imported::Named(n) => n.as_str(),
+                };
+                match visited {
+                    Some(visited) => self.export_inner(target, exported, hops + 1, visited),
+                    None => self.export(target, exported),
+                }
+            }
         })
     }
 
-    fn export(&self, file: &'a TsFile, name: &str, hops: usize) -> (Val<'a>, Evidence) {
-        if hops > MAX_HOPS {
-            return (Val::Unknown, Evidence::ResolvedExact);
+    /// What module `file` exports under `name`. Memoised; each query visits every (module, name)
+    /// pair at most once, so `export *` fan-out through layered barrels stays linear instead of
+    /// exponential.
+    fn export(&self, file: &'a TsFile, name: &str) -> (Val<'a>, Evidence) {
+        let key = (file.path.as_str(), name.to_owned());
+        if let Some(cached) = self.export_memo.borrow().get(&key) {
+            return *cached;
         }
-        if let Some(local) = file.local_exports.iter().find(|e| e.exported == name)
-            && let Some(found) = self.binding(file, &local.local, hops)
+        let result = self.export_inner(file, name, 0, &mut HashSet::new());
+        self.export_memo.borrow_mut().insert(key, result);
+        result
+    }
+
+    fn export_inner(
+        &self,
+        file: &'a TsFile,
+        name: &str,
+        hops: usize,
+        visited: &mut Visited<'a>,
+    ) -> (Val<'a>, Evidence) {
+        let unknown = (Val::Unknown, Evidence::ResolvedExact);
+        if hops > MAX_HOPS || !visited.insert((file.path.as_str(), name.to_owned())) {
+            return unknown;
+        }
+        let Some(maps) = self.maps(file) else {
+            return unknown;
+        };
+        if let Some(&i) = maps.local_exports.get(name)
+            && let Some(found) = self.binding_inner(file, &file.local_exports[i].local, hops, Some(visited))
         {
             return found;
         }
-        let direct = file.decls.iter().position(|d| {
-            d.exported && if name == "default" { d.default_export } else { !d.default_export && d.name == name }
-        });
+        let direct = if name == "default" { maps.default_export } else { maps.named_exports.get(name).copied() };
         if let Some(i) = direct {
             return (Val::Decl(file, i), Evidence::ResolvedExact);
         }
@@ -192,33 +262,35 @@ impl<'a> Index<'a> {
             match reexport {
                 ReExport::Named { name: inner, alias, source, .. } if alias == name => {
                     return match self.module(&file.path, source) {
-                        ModuleRes::File(target) => self.export(target, inner, hops + 1),
+                        ModuleRes::File(target) => self.export_inner(target, inner, hops + 1, visited),
                         ModuleRes::External => (Val::External, Evidence::ResolvedExact),
-                        ModuleRes::Missing => (Val::Unknown, Evidence::ResolvedExact),
+                        ModuleRes::Missing => unknown,
                     };
                 }
                 ReExport::Namespace { alias, source, .. } if alias == name => {
                     return match self.module(&file.path, source) {
                         ModuleRes::File(target) => (Val::Namespace(target), Evidence::ResolvedExact),
                         ModuleRes::External => (Val::External, Evidence::ResolvedExact),
-                        ModuleRes::Missing => (Val::Unknown, Evidence::ResolvedExact),
+                        ModuleRes::Missing => unknown,
                     };
                 }
                 _ => {}
             }
         }
         if name == "default" {
-            return (Val::Unknown, Evidence::ResolvedExact); // `export *` never forwards default
+            return unknown; // `export *` never forwards default
         }
-        let mut found: Vec<(Val<'a>, Evidence)> = Vec::new();
+        // Distinct providers only: the same declaration reached through two barrels (a diamond) is
+        // one binding, not an ambiguity.
+        let mut found: BTreeMap<String, (Val<'a>, Evidence)> = BTreeMap::new();
         let mut external = false;
         for reexport in &file.reexports {
             if let ReExport::All { source, .. } = reexport {
                 match self.module(&file.path, source) {
                     ModuleRes::File(target) => {
-                        let result = self.export(target, name, hops + 1);
-                        if !matches!(result.0, Val::Unknown) {
-                            found.push(result);
+                        let result = self.export_inner(target, name, hops + 1, visited);
+                        if let Some(key) = self.val_key(result.0) {
+                            found.entry(key).or_insert(result);
                         }
                     }
                     ModuleRes::External => external = true,
@@ -226,13 +298,21 @@ impl<'a> Index<'a> {
                 }
             }
         }
-        match found.len() {
-            0 if external => (Val::External, Evidence::ResolvedExact),
-            0 => (Val::Unknown, Evidence::ResolvedExact),
-            1 => found.remove(0),
-            // Two `export *` providing the same name is ambiguous in TypeScript (and an error when
-            // used); keep the first deterministically but do not claim certainty.
-            _ => (found.remove(0).0, Evidence::StaticInferred),
+        let count = found.len();
+        match found.into_values().next() {
+            None if external => (Val::External, Evidence::ResolvedExact),
+            None => unknown,
+            Some(only) if count == 1 => only,
+            // Two `export *` providing different declarations under one name is ambiguous in
+            // TypeScript; keep one deterministically but do not claim certainty.
+            Some((val, _)) => (val, Evidence::StaticInferred),
+        }
+    }
+
+    fn val_key(&self, val: Val<'a>) -> Option<String> {
+        match val {
+            Val::Namespace(f) => Some(format!("ns:{}", f.path)),
+            other => self.symbol_of(other).map(|id| id.as_str().to_owned()),
         }
     }
 
@@ -245,13 +325,13 @@ impl<'a> Index<'a> {
         if type_params.contains(&head) {
             return (Val::External, Evidence::ResolvedExact);
         }
-        let Some((mut val, mut evidence)) = self.binding(file, head, 0) else {
+        let Some((mut val, mut evidence)) = self.binding(file, head) else {
             return (Val::External, Evidence::ResolvedExact); // global/lib type: string, Promise, Date…
         };
         for segment in segments {
             (val, evidence) = match val {
                 Val::Namespace(target) => {
-                    let (v, e) = self.export(target, segment, 0);
+                    let (v, e) = self.export(target, segment);
                     (v, weaker(evidence, e))
                 }
                 Val::External => return (Val::External, evidence),
@@ -314,7 +394,7 @@ impl<'a> Index<'a> {
                 None => (Val::Unknown, Evidence::ResolvedExact),
             };
         }
-        self.binding(scope.file, name, 0).unwrap_or((Val::External, Evidence::ResolvedExact))
+        self.binding(scope.file, name).unwrap_or((Val::External, Evidence::ResolvedExact))
     }
 
     /// What member access on `val` operates on.
@@ -384,7 +464,7 @@ impl<'a> Index<'a> {
                 let evidence = weaker(base_evidence, receiver_evidence);
                 match target {
                     Val::Namespace(f) => {
-                        let (v, e) = self.export(f, property, 0);
+                        let (v, e) = self.export(f, property);
                         (v, weaker(evidence, e))
                     }
                     Val::Instance(f, d) | Val::Decl(f, d) if f.decls[d].kind != SymbolKind::Enum => {
@@ -599,8 +679,8 @@ impl<'a> Index<'a> {
                 ModuleRes::File(target) => {
                     let resolved = match &import.imported {
                         Imported::Namespace => Some(SymbolId::file(&target.path)),
-                        Imported::Default => self.symbol_of(self.export(target, "default", 0).0),
-                        Imported::Named(n) => self.symbol_of(self.export(target, n, 0).0),
+                        Imported::Default => self.symbol_of(self.export(target, "default").0),
+                        Imported::Named(n) => self.symbol_of(self.export(target, n).0),
                     };
                     match resolved {
                         Some(id) => out.edge(

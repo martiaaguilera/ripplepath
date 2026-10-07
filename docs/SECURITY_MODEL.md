@@ -20,7 +20,9 @@ Status: controls listed here are implemented and tested unless marked *planned*.
 | Repository bomb (huge blob) | Blob size read from the object header *before* inflating; above 1 MiB not loaded. | `Repo::read_text` |
 | Huge snapshots | Hard file-count limit (200k). | `AnalysisError::TooManyFiles` |
 | Parser DoS (pathological input) | Per-file parse time budget; failure recorded as uncertainty. | `syntax::parse` |
-| Stack exhaustion from deep nesting | Iterative tree walks; recursion bounded (types 32, type names/receivers 64). | `hostile_nesting_does_not_overflow_the_stack` (reproduced overflow before the fix) |
+| Stack exhaustion from deep nesting | Iterative tree walks; recursion bounded (types 32, type names/receivers/expression chains 64). | `hostile_nesting_does_not_overflow_the_stack` (Java and TS), `deep_qualified_names_in_extends_and_new_do_not_overflow` (both reproduced overflows before their fixes) |
+| Exponential re-export resolution (`export *` barrels) | Per-query visited set over (module, name) plus memoised top-level results; chains capped at 16 hops. | `star_export_fan_out_is_not_exponential` (old resolver: >120 s timeout; new: 10 ms) |
+| Quadratic work on large files (members, fingerprints, suite locals) | Hash-indexed member merging, file lookups and fingerprint exclusions; suite locals visible to each test capped at 256. | `many_members_and_suite_locals_stay_linear`, `large_classes_resolve_in_linear_time` |
 | Terminal escape / Trojan-Source text | Text output escapes all control characters (except newline), Unicode Cf format characters and line/paragraph separators. | `cli::text` tests |
 | XSS from identifiers in the UI | React escapes text; no `dangerouslySetInnerHTML`; strict CSP (`script-src 'self'`). | server header test |
 | DNS rebinding against the local server | `Host` must be loopback (`localhost`, `127.0.0.1`, `[::1]`) or explicitly `--allow-host`ed. | `dns_rebinding_hosts_are_rejected` |

@@ -25,6 +25,15 @@ CONTAINS) no longer propagates. Imports remain in the graph as evidence.
 (`items.reduce`, `res.json`) as unresolved would bury real gaps. A call is reported only when its
 member name is declared somewhere in the repository, the case where an edge may truly be missing.
 
+**Security review: three denial-of-service paths in the TS frontend.** (1) `extends a.b.b…` and
+`new a.b.b…()` recursed per segment and overflowed the stack. (2) `export *` resolution explored
+every path through layered barrels: with 6 re-exports per layer the old resolver did not finish in
+120 s; a per-query visited set plus memoised results makes it 10 ms. The first version of that test
+used 2 branches per layer and passed against the *old* code too — a test that cannot fail proves
+nothing, so it was widened until it reproduced. (3) Several scans made big files quadratic; the
+worst, shared with Java, was fingerprint exclusion via `Vec::contains` (50k members: 21 s → 4 s in a
+debug build). Diamond re-exports were also wrongly marked ambiguous; providers are now deduplicated.
+
 **Interface dispatch matters in TS too.** `Cart.total` calls `this.prices.quote()` on a `PriceSource`
 injected through a constructor parameter property; the change in `PricingService.quote` reaches it
 only through the forward `OVERRIDES` hop to the interface member.

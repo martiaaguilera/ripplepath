@@ -81,6 +81,8 @@ pub fn syntax_error_lines(tree: &Tree) -> Vec<u32> {
 /// is what "did this symbol change?" should mean. Excluding nested members gives each symbol its
 /// *own* fingerprint so that editing a method does not mark its class modified.
 pub fn fingerprint(node: Node<'_>, source: &str, exclude: &[usize], is_comment: impl Fn(&str) -> bool) -> Fingerprint {
+    // A set, not a slice scan: a class with many members would otherwise cost nodes × members.
+    let exclude: std::collections::HashSet<usize> = exclude.iter().copied().collect();
     let mut builder = FingerprintBuilder::new();
     let mut stack = vec![node];
     while let Some(current) = stack.pop() {

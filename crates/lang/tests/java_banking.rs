@@ -267,3 +267,17 @@ fn resolution_is_deterministic_regardless_of_file_order() {
     let reversed = java::resolve(&files.iter().collect::<Vec<_>>());
     assert_eq!(forward, reversed);
 }
+
+#[test]
+fn large_classes_resolve_in_linear_time() {
+    const SIZE: usize = 20_000;
+    // 20k methods, each calling the next: a member lookup that scans every method per call is
+    // 400M comparisons; a hash lookup is 20k.
+    let methods: String = (0..20_000).map(|i| format!("  void m{i}() {{ m{}(); }}\n", i + 1)).collect();
+    let src = format!("package p;\nclass Big {{\n{methods}  void m20000() {{}}\n}}\n");
+    let started = std::time::Instant::now();
+    let file = java::extract("p/Big.java", &src, Duration::from_secs(60)).unwrap();
+    let g = java::resolve(&[&file]);
+    assert!(g.edges.iter().filter(|e| e.kind == EdgeKind::Calls).count() >= SIZE);
+    assert!(started.elapsed() < Duration::from_secs(20), "took {:?}", started.elapsed());
+}

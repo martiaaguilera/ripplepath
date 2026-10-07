@@ -227,6 +227,124 @@ fn hostile_nesting_does_not_overflow_the_stack() {
 }
 
 #[test]
+fn deep_qualified_names_in_extends_and_new_do_not_overflow() {
+    let chain = format!("a{}", ".b".repeat(100_000));
+    let src = format!(
+        "export class X extends {chain} {{}}
+export const y = new {chain}();
+"
+    );
+    let file = ts::extract("deep.ts", &src, Duration::from_secs(60)).unwrap();
+    ts::resolve(&[&file]);
+}
+
+#[test]
+fn star_export_fan_out_is_not_exponential() {
+    // 18 barrel layers of 6 files, each re-exporting all 6 files of the next layer: following every
+    // path would visit 6^16 module/name pairs within the hop limit.
+    const WIDTH: usize = 6;
+    const LAYERS: usize = 18;
+    let mut files = Vec::new();
+    for layer in 0..LAYERS {
+        for side in 0..WIDTH {
+            let body: String = (0..WIDTH).map(|next| format!("export * from './m{}_{next}';\n", layer + 1)).collect();
+            files.push((format!("m{layer}_{side}.ts"), body));
+        }
+    }
+    files.push((
+        "use.ts".to_owned(),
+        "import { target } from './m0_0';\nexport function run() { target(); }\n".to_owned(),
+    ));
+    let facts: Vec<TsFile> = files.iter().map(|(p, s)| ts::extract(p, s, BUDGET).unwrap()).collect();
+    let started = std::time::Instant::now();
+    let g = ts::resolve(&facts.iter().collect::<Vec<_>>());
+    assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+    assert!(g.unresolved.iter().any(|u| u.detail == "import target from ./m0_0"));
+}
+
+#[test]
+fn diamond_star_exports_are_not_ambiguous() {
+    let g = graph_of(&[
+        (
+            "d.ts",
+            "export function x() {}
+",
+        ),
+        (
+            "b.ts",
+            "export * from './d';
+",
+        ),
+        (
+            "c.ts",
+            "export * from './d';
+",
+        ),
+        (
+            "a.ts",
+            "export * from './b';
+export * from './c';
+",
+        ),
+        (
+            "use.ts",
+            "import { x } from './a';
+export function run() { x(); }
+",
+        ),
+    ]);
+    assert_eq!(edge(&g, "ts:use.ts#run", "ts:d.ts#x", EdgeKind::Calls), Some(Evidence::ResolvedExact));
+}
+
+#[test]
+fn many_members_and_suite_locals_stay_linear() {
+    let members: String = (0..50_000)
+        .map(|i| {
+            format!(
+                "  m{i}() {{}}
+"
+            )
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let file = ts::extract(
+        "big.ts",
+        &format!(
+            "export class Big {{
+{members}}}
+"
+        ),
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    assert_eq!(file.decls[0].members.len(), 50_000);
+
+    let locals: String = (0..5_000)
+        .map(|i| {
+            format!(
+                "  let v{i} = {i};
+"
+            )
+        })
+        .collect();
+    let tests: String = (0..5_000)
+        .map(|i| {
+            format!(
+                "  it('t{i}', () => {{}});
+"
+            )
+        })
+        .collect();
+    let suite = format!(
+        "describe('s', () => {{
+{locals}{tests}}});
+"
+    );
+    ts::extract("big.test.ts", &suite, Duration::from_secs(60)).unwrap();
+    assert!(started.elapsed() < Duration::from_secs(20), "took {:?}", started.elapsed());
+}
+
+#[test]
 fn resolution_is_deterministic_regardless_of_file_order() {
     let mut files = extract_all("v2");
     let forward = ts::resolve(&files.iter().collect::<Vec<_>>());

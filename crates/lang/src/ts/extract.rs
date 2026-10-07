@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use ripplepath_core::{SymbolKind, Visibility};
@@ -13,6 +14,10 @@ use crate::syntax::{self, ParseError, line, named_children, span, text};
 const MAX_EXPR_DEPTH: usize = 64;
 /// `describe` nesting deeper than this is not searched for test cases.
 const MAX_SUITE_DEPTH: usize = 16;
+/// Suite-level locals visible to each test. Each test gets its own copy, so without a cap a suite
+/// with N locals and M tests would cost N×M; the most recent declarations are kept because they
+/// shadow earlier ones.
+const MAX_SUITE_LOCALS: usize = 256;
 /// Identifiers collected from one destructuring pattern.
 const MAX_PATTERN_NAMES: usize = 256;
 
@@ -409,6 +414,7 @@ impl<'s> FileCx<'s> {
         }
 
         let mut member_ids = Vec::new();
+        let mut by_name = HashMap::new();
         if let Some(body) = node.child_by_field_name("body") {
             for member in named_children(body) {
                 let members = match member.kind() {
@@ -430,7 +436,7 @@ impl<'s> FileCx<'s> {
                     member_ids.push(member.id());
                 }
                 for m in members {
-                    merge_member(&mut decl.members, m);
+                    merge_member(&mut decl.members, &mut by_name, m);
                 }
             }
         }
@@ -455,6 +461,7 @@ impl<'s> FileCx<'s> {
             }
         }
         let mut member_ids = Vec::new();
+        let mut by_name = HashMap::new();
         if let Some(body) = node.child_by_field_name("body") {
             for member in named_children(body) {
                 let kind = match member.kind() {
@@ -471,6 +478,7 @@ impl<'s> FileCx<'s> {
                 let ty_field = if kind == SymbolKind::Method { "return_type" } else { "type" };
                 merge_member(
                     &mut decl.members,
+                    &mut by_name,
                     Member {
                         name: text(member_name, source).to_owned(),
                         kind,
@@ -514,7 +522,8 @@ impl<'s> FileCx<'s> {
         path.push(title);
 
         if is_test {
-            let mut body = Body { locals: scope.to_vec(), refs: Vec::new() };
+            let visible = &scope[scope.len().saturating_sub(MAX_SUITE_LOCALS)..];
+            let mut body = Body { locals: visible.to_vec(), refs: Vec::new() };
             for arg in &args {
                 walk(*arg, source, &mut body);
             }
@@ -573,12 +582,15 @@ fn is_declaration(kind: &str) -> bool {
 
 /// Overloads and get/set pairs share a name and therefore one identity: spans are united and
 /// fingerprints combined so a change to any of them marks the member modified.
-fn merge_member(members: &mut Vec<Member>, member: Member) {
+fn merge_member(members: &mut Vec<Member>, by_name: &mut HashMap<String, usize>, member: Member) {
     // Keyed by name only: a static and an instance member with the same name share one identity.
-    let Some(existing) = members.iter_mut().find(|m| m.name == member.name) else {
+    // The index keeps this linear for classes with many members.
+    let Some(&position) = by_name.get(&member.name) else {
+        by_name.insert(member.name.clone(), members.len());
         members.push(member);
         return;
     };
+    let existing = &mut members[position];
     let mut builder = ripplepath_core::FingerprintBuilder::new();
     builder.token(&existing.fingerprint.to_string());
     builder.token(&member.fingerprint.to_string());
@@ -728,15 +740,25 @@ fn compact(raw: &str) -> String {
 }
 
 /// `Foo` / `ns.Foo` written as an expression (class `extends` clauses take expressions).
+/// Iterative and capped: the chain length is attacker-controlled.
 fn dotted_name(node: Node<'_>, source: &str) -> Option<String> {
-    match node.kind() {
-        "identifier" => Some(text(node, source).to_owned()),
-        "member_expression" => {
-            let object = dotted_name(node.child_by_field_name("object")?, source)?;
-            Some(format!("{object}.{}", text(node.child_by_field_name("property")?, source)))
+    let mut parts = Vec::new();
+    let mut current = node;
+    for _ in 0..=MAX_EXPR_DEPTH {
+        match current.kind() {
+            "identifier" => {
+                parts.push(text(current, source));
+                parts.reverse();
+                return Some(parts.join("."));
+            }
+            "member_expression" => {
+                parts.push(text(current.child_by_field_name("property")?, source));
+                current = current.child_by_field_name("object")?;
+            }
+            _ => return None,
         }
-        _ => None,
     }
+    None
 }
 
 fn new_type(value: Node<'_>, source: &str) -> Option<TypeRef> {
