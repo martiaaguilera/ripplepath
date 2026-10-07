@@ -1,0 +1,17 @@
+[package]
+name = "ripplepath-graph"
+description = "Typed dependency graph and evidence-backed impact propagation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ripplepath-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
