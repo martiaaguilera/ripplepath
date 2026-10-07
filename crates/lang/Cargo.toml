@@ -1,0 +1,17 @@
+[package]
+name = "ripplepath-lang"
+description = "Language frontends for Ripplepath: symbol extraction and reference resolution"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ripplepath-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tree-sitter.workspace = true
+tree-sitter-java.workspace = true
+
+[lints]
+workspace = true
