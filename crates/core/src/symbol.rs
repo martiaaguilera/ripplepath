@@ -37,6 +37,9 @@ impl fmt::Display for SymbolId {
 pub enum Language {
     Java,
     TypeScript,
+    /// Parsed with the TSX grammar (a superset of modern JavaScript); ids share the `ts:` prefix
+    /// because module resolution and symbol rules are identical.
+    JavaScript,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -51,15 +54,27 @@ pub enum SymbolKind {
     Method,
     Constructor,
     Field,
+    /// Module-level function, including `const f = () => …`.
+    Function,
+    /// Module-level variable that is not a function.
+    Variable,
+    TypeAlias,
+    /// A test registered by a call such as `it("…", …)`; it has no declaration of its own.
+    TestCase,
 }
 
 impl SymbolKind {
     pub fn is_type(self) -> bool {
-        matches!(self, Self::Class | Self::Interface | Self::Enum | Self::Record | Self::Annotation)
+        matches!(self, Self::Class | Self::Interface | Self::Enum | Self::Record | Self::Annotation | Self::TypeAlias)
     }
 
     pub fn is_callable(self) -> bool {
-        matches!(self, Self::Method | Self::Constructor)
+        matches!(self, Self::Method | Self::Constructor | Self::Function)
+    }
+
+    /// Kinds that are individually runnable tests.
+    pub fn is_test_unit(self) -> bool {
+        matches!(self, Self::Method | Self::TestCase)
     }
 }
 

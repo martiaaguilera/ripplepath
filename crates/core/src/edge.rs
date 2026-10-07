@@ -19,9 +19,11 @@ pub enum EdgeKind {
 
 impl EdgeKind {
     /// Containment is structure, not dependency: editing one method must not make every
-    /// sibling method's callers "impacted" by way of the enclosing class.
+    /// sibling method's callers "impacted" by way of the enclosing class. An import alone does not
+    /// execute or name anything in code; actual use of the import produces its own CALLS or
+    /// REFERENCES edge, so propagating through IMPORTS would only mark whole files as impacted.
     pub fn propagates_impact(self) -> bool {
-        !matches!(self, Self::Contains)
+        !matches!(self, Self::Contains | Self::Imports)
     }
 }
 

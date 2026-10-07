@@ -9,11 +9,12 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use ripplepath_core::{Edge, EdgeKind, Evidence, Span, Symbol, SymbolId, SymbolKind, Visibility};
+use ripplepath_core::{EdgeKind, Evidence, Span, Symbol, SymbolId, SymbolKind, Visibility};
 
 use super::TEST_ANNOTATIONS;
 use super::facts::{BodyRef, FieldDecl, JavaFile, Local, MethodDecl, Receiver, TypeDecl, TypeUse};
-use crate::{LanguageGraph, UnresolvedRef};
+use crate::LanguageGraph;
+use crate::output::Output;
 
 /// `java.lang.Object` members every class inherits; calls to them are external, not unresolved.
 const OBJECT_METHODS: &[&str] =
@@ -905,60 +906,4 @@ enum CallRes<'a> {
     Targets { methods: Vec<(String, &'a MethodDecl)>, evidence: Evidence, rule: &'static str },
     External,
     Unresolved,
-}
-
-#[derive(Default)]
-struct Output {
-    symbols: Vec<Symbol>,
-    edges: BTreeMap<(SymbolId, SymbolId, EdgeKind), Edge>,
-    unresolved: Vec<UnresolvedRef>,
-}
-
-impl Output {
-    #[allow(clippy::too_many_arguments)]
-    fn edge(
-        &mut self,
-        from: &SymbolId,
-        to: &SymbolId,
-        kind: EdgeKind,
-        evidence: Evidence,
-        file: &str,
-        line: u32,
-        rule: &str,
-    ) {
-        if from == to {
-            return; // recursion is not a dependency on something else
-        }
-        let candidate = Edge {
-            from: from.clone(),
-            to: to.clone(),
-            kind,
-            evidence,
-            file: file.to_owned(),
-            line,
-            rule: rule.to_owned(),
-        };
-        // One edge per (from, to, kind). Keep the strongest evidence, then the earliest location,
-        // so the stored explanation is the most defensible one and independent of visit order.
-        let key = (from.clone(), to.clone(), kind);
-        match self.edges.get(&key) {
-            Some(existing)
-                if (std::cmp::Reverse(existing.evidence.strength()), existing.line, &existing.rule)
-                    <= (std::cmp::Reverse(candidate.evidence.strength()), candidate.line, &candidate.rule) => {}
-            _ => {
-                self.edges.insert(key, candidate);
-            }
-        }
-    }
-
-    fn unresolved(&mut self, from: &SymbolId, file: &str, line: u32, detail: String) {
-        self.unresolved.push(UnresolvedRef { from: from.clone(), file: file.to_owned(), line, detail });
-    }
-
-    fn finish(mut self) -> LanguageGraph {
-        self.symbols.sort_by(|a, b| a.id.cmp(&b.id));
-        self.unresolved.sort();
-        self.unresolved.dedup();
-        LanguageGraph { symbols: self.symbols, edges: self.edges.into_values().collect(), unresolved: self.unresolved }
-    }
 }

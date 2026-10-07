@@ -5,7 +5,9 @@
 //! - `resolve(&[facts])` → symbols and evidence-carrying edges. Depends on the whole snapshot.
 
 pub mod java;
+mod output;
 mod syntax;
+pub mod ts;
 
 use ripplepath_core::{Edge, Symbol, SymbolId};
 use serde::{Deserialize, Serialize};

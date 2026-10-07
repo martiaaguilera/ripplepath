@@ -1,0 +1,7 @@
+{
+  "name": "typescript-checkout",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "vitest run" },
+  "devDependencies": { "typescript": "6.0.3", "vitest": "5.0.3" }
+}
