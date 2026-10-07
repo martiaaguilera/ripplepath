@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: "1"
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  web:
+    name: Web (typecheck, lint, unit, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 7
+
+  e2e:
+    name: End-to-end (CLI demo + server + Playwright)
+    runs-on: ubuntu-latest
+    needs: [rust, web]
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist
+      - run: cargo build --locked -p ripplepath-cli
+      - name: CLI smoke (demo repository, text and JSON)
+        run: |
+          ./target/debug/ripplepath demo --dir "$RUNNER_TEMP/demo" > "$RUNNER_TEMP/demo.txt"
+          ./target/debug/ripplepath analyze --repo "$RUNNER_TEMP/demo" --base main~1 --head main --format json > "$RUNNER_TEMP/analysis.json"
+          grep -q '"schema_version": 1' "$RUNNER_TEMP/analysis.json"
+      - name: Start server
+        run: |
+          ./target/debug/ripplepath serve --repo "$RUNNER_TEMP/demo" --base main~1 --head main --web-dir web/dist &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:7878/api/v1/health && break; sleep 1; done
+      - working-directory: web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test
+
+  audit:
+    name: Dependency licenses and advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - working-directory: web
+        run: npm audit --omit=dev --audit-level=high
