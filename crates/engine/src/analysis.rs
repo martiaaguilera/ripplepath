@@ -17,6 +17,10 @@ pub enum AnalysisError {
     Git(#[from] GitError),
     #[error("snapshot has {count} files, above the limit of {limit}")]
     TooManyFiles { count: usize, limit: usize },
+    #[error(transparent)]
+    Storage(#[from] ripplepath_storage::StorageError),
+    #[error("internal error: the fact cache lost its store")]
+    NoStore,
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +34,8 @@ pub struct AnalyzeOptions {
     pub graph_node_cap: usize,
     /// Maximum individually listed unresolved references; the rest are summarised.
     pub unresolved_cap: usize,
+    /// Persistent fact cache. Files unchanged since a previous run are not parsed again.
+    pub db: Option<PathBuf>,
 }
 
 impl AnalyzeOptions {
@@ -42,6 +48,7 @@ impl AnalyzeOptions {
             limits: Limits::default(),
             graph_node_cap: 400,
             unresolved_cap: 200,
+            db: None,
         }
     }
 }
@@ -52,7 +59,10 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
     let base_rev = repo.resolve(&options.base)?;
     let head_rev = repo.resolve(&options.head)?;
 
-    let mut cache = FactCache::default();
+    let mut cache = match &options.db {
+        Some(path) => FactCache::with_store(ripplepath_storage::Store::open(path)?),
+        None => FactCache::default(),
+    };
     let base = build_snapshot(&repo, base_rev, &mut cache, &options.limits)?;
     let head = build_snapshot(&repo, head_rev, &mut cache, &options.limits)?;
     let indexed_at = started.elapsed();

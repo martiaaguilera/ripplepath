@@ -3,11 +3,13 @@
 mod analysis;
 mod changes;
 pub mod fixture;
+mod index;
 mod limits;
 mod report;
 mod snapshot;
 
 pub use analysis::{AnalysisError, AnalyzeOptions, analyze};
+pub use index::{IndexOutcome, index_revision, indexed_graph};
 pub use limits::Limits;
 pub use report::*;
 pub use ripplepath_git::GitError;

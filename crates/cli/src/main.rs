@@ -25,6 +25,18 @@ struct Cli {
 enum Command {
     /// Analyse the change between two revisions.
     Analyze(AnalyzeArgs),
+    /// Index one revision into the local database, reusing everything unchanged since the last run.
+    Index {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long, default_value = "HEAD")]
+        rev: String,
+        /// Database file [default: <repo>/.ripplepath/index.db].
+        #[arg(long)]
+        db: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
     /// Serve the web UI and the read-only HTTP API for one repository (localhost by default).
     Serve {
         #[arg(long, default_value = ".")]
@@ -77,6 +89,9 @@ struct AnalyzeArgs {
     /// Maximum dependency depth to follow from changed symbols.
     #[arg(long, default_value_t = 6, value_parser = clap::value_parser!(u32).range(1..=32))]
     max_depth: u32,
+    /// Reuse and fill a persistent fact cache (e.g. `.ripplepath/index.db`).
+    #[arg(long)]
+    db: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -132,8 +147,63 @@ fn run(command: Command) -> Result<(), String> {
         Command::Analyze(args) => {
             let mut options = AnalyzeOptions::new(&args.repo, &args.base, &args.head);
             options.impact = ImpactOptions { max_depth: args.max_depth, ..ImpactOptions::default() };
+            options.db = args.db;
             let report = analyze(&options).map_err(|e| e.to_string())?;
             emit(&report, args.format, args.output.as_deref())
+        }
+        Command::Index { repo, rev, db, format } => {
+            let db = db.unwrap_or_else(|| repo.join(".ripplepath").join("index.db"));
+            let outcome = ripplepath_engine::index_revision(&repo, &rev, &db, &ripplepath_engine::Limits::default())
+                .map_err(|e| e.to_string())?;
+            let d = outcome.delta;
+            let rendered = match format {
+                Format::Json => format!(
+                    "{}
+",
+                    serde_json::json!({
+                        "tree": outcome.tree,
+                        "commit": outcome.commit,
+                        "files": outcome.files,
+                        "parsed": outcome.parsed,
+                        "reused": outcome.reused,
+                        "symbols": outcome.symbols,
+                        "edges": outcome.edges,
+                        "delta": {
+                            "files_changed": d.files_changed,
+                            "symbols_added": d.symbols_added,
+                            "symbols_removed": d.symbols_removed,
+                            "symbols_updated": d.symbols_updated,
+                            "edges_added": d.edges_added,
+                            "edges_removed": d.edges_removed,
+                            "edges_updated": d.edges_updated,
+                        },
+                        "elapsed_ms": outcome.elapsed_ms,
+                    })
+                ),
+                Format::Text => format!(
+                    "Indexed {rev} ({}) into {}
+  files {}  |  parsed {}  |  reused from cache {}
+  symbols {} (+{} -{} ~{})  |  edges {} (+{} -{} ~{})
+  {} ms
+",
+                    outcome.commit.as_deref().unwrap_or(&outcome.tree).chars().take(10).collect::<String>(),
+                    db.display(),
+                    outcome.files,
+                    outcome.parsed,
+                    outcome.reused,
+                    outcome.symbols,
+                    d.symbols_added,
+                    d.symbols_removed,
+                    d.symbols_updated,
+                    outcome.edges,
+                    d.edges_added,
+                    d.edges_removed,
+                    d.edges_updated,
+                    outcome.elapsed_ms,
+                ),
+            };
+            print!("{}", text::neutralize_terminal_controls(&rendered));
+            Ok(())
         }
         Command::Serve { repo, addr, web_dir, base, head, allowed_hosts } => {
             if !addr.ip().is_loopback() {

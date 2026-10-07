@@ -8,6 +8,7 @@ use ripplepath_graph::CodeGraph;
 use ripplepath_lang::java::{self, facts::JavaFile};
 use ripplepath_lang::ts::{self, facts::TsFile};
 use ripplepath_lang::{LanguageGraph, UnresolvedRef};
+use ripplepath_storage::{CachedFacts, StorageError, Store};
 
 use crate::Limits;
 use crate::analysis::AnalysisError;
@@ -64,11 +65,105 @@ type CacheKey = (ObjectId, String);
 /// is parsed once. The path is part of the key because facts record it and TypeScript module
 /// resolution depends on it. Failures are cached too: re-parsing a file that timed out would
 /// just time out again.
+///
+/// With a [`Store`] attached, results also persist across runs: that is what makes re-indexing
+/// after a small change cheap. Persisted entries are keyed by extractor version, so a new extractor
+/// never reuses facts produced by an old one.
 #[derive(Default)]
 pub struct FactCache {
     facts: HashMap<CacheKey, Result<Facts, String>>,
+    store: Option<Store>,
+    pending: Vec<(String, String, String, CachedFacts)>,
+    /// Found in memory or in the store.
     pub hits: usize,
+    /// Parsed in this run.
     pub misses: usize,
+}
+
+impl FactCache {
+    pub fn with_store(store: Store) -> Self {
+        Self { store: Some(store), ..Self::default() }
+    }
+
+    pub fn store_mut(&mut self) -> Option<&mut Store> {
+        self.store.as_mut()
+    }
+
+    pub fn into_store(self) -> Option<Store> {
+        self.store
+    }
+
+    /// Writes facts parsed in this run to the store.
+    pub fn flush(&mut self) -> Result<(), StorageError> {
+        if let Some(store) = self.store.as_mut()
+            && !self.pending.is_empty()
+        {
+            store.put_facts(&self.pending)?;
+        }
+        self.pending.clear();
+        Ok(())
+    }
+
+    fn lookup(&mut self, key: &CacheKey, language: Language) -> bool {
+        if self.facts.contains_key(key) {
+            return true;
+        }
+        let Some(store) = self.store.as_ref() else {
+            return false;
+        };
+        let cached = store.cached_facts(&key.0.to_string(), &key.1, extractor_key(language));
+        let restored = match cached {
+            Ok(Some(CachedFacts::Ok(bytes))) => decode(language, &bytes).map(Ok),
+            Ok(Some(CachedFacts::Error(message))) => Some(Err(message)),
+            // A read error or an undecodable entry is a cache miss: parsing again is always correct.
+            Ok(None) | Err(_) => None,
+        };
+        match restored {
+            Some(result) => {
+                self.facts.insert(key.clone(), result);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn insert(&mut self, key: CacheKey, language: Language, result: Result<Facts, String>) {
+        if self.store.is_some() {
+            let entry = match &result {
+                Ok(facts) => encode(facts).map(CachedFacts::Ok),
+                Err(message) => Some(CachedFacts::Error(message.clone())),
+            };
+            if let Some(entry) = entry {
+                self.pending.push((key.0.to_string(), key.1.clone(), extractor_key(language).to_owned(), entry));
+            }
+        }
+        self.facts.insert(key, result);
+    }
+}
+
+fn extractor_key(language: Language) -> &'static str {
+    // Bump together with `EXTRACTOR_VERSION` in the frontends.
+    const _: () = assert!(java::EXTRACTOR_VERSION == 1 && ts::EXTRACTOR_VERSION == 1);
+    match language {
+        Language::Java => "java/1",
+        Language::TypeScript | Language::JavaScript => "ts/1",
+    }
+}
+
+fn encode(facts: &Facts) -> Option<Vec<u8>> {
+    match facts {
+        Facts::Java(f) => serde_json::to_vec(f.as_ref()).ok(),
+        Facts::Ts(f) => serde_json::to_vec(f.as_ref()).ok(),
+    }
+}
+
+fn decode(language: Language, bytes: &[u8]) -> Option<Facts> {
+    match language {
+        Language::Java => serde_json::from_slice(bytes).ok().map(|f| Facts::Java(Arc::new(f))),
+        Language::TypeScript | Language::JavaScript => {
+            serde_json::from_slice(bytes).ok().map(|f| Facts::Ts(Arc::new(f)))
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -154,9 +249,9 @@ pub fn build_snapshot(
                 exclusion(&entry.path).map_or(IndexStatus::Indexed, |reason| IndexStatus::Excluded { reason })
             }
         };
-        if status == IndexStatus::Indexed {
+        if let (IndexStatus::Indexed, Some(lang)) = (&status, language) {
             let key = (blob, entry.path.clone());
-            if cache.facts.contains_key(&key) {
+            if cache.lookup(&key, lang) {
                 cache.hits += 1;
             } else {
                 cache.misses += 1;
@@ -172,14 +267,18 @@ pub fn build_snapshot(
 
     // Parsing dominates indexing time and is independent per file, so it is the one parallel
     // stage. Rayon's pool is bounded by the number of cores.
-    let parsed: Vec<(CacheKey, Result<Facts, String>)> = to_parse
+    let parsed: Vec<(CacheKey, Language, Result<Facts, String>)> = to_parse
         .into_par_iter()
         .filter_map(|(key, text, language)| {
-            let result = extract(language?, &key.1, &text, limits);
-            Some((key, result))
+            let language = language?;
+            let result = extract(language, &key.1, &text, limits);
+            Some((key, language, result))
         })
         .collect();
-    cache.facts.extend(parsed);
+    for (key, language, result) in parsed {
+        cache.insert(key, language, result);
+    }
+    cache.flush()?;
 
     let mut java_facts: Vec<Arc<JavaFile>> = Vec::new();
     let mut ts_facts: Vec<Arc<TsFile>> = Vec::new();
