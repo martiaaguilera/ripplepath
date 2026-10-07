@@ -5,8 +5,9 @@ use rayon::prelude::*;
 use ripplepath_core::Language;
 use ripplepath_git::{BlobContent, EntryKind, ObjectId, PathRejection, Repo, Revision};
 use ripplepath_graph::CodeGraph;
-use ripplepath_lang::UnresolvedRef;
 use ripplepath_lang::java::{self, facts::JavaFile};
+use ripplepath_lang::ts::{self, facts::TsFile};
+use ripplepath_lang::{LanguageGraph, UnresolvedRef};
 
 use crate::Limits;
 use crate::analysis::AnalysisError;
@@ -25,6 +26,10 @@ pub enum IndexStatus {
     },
     Symlink,
     Submodule,
+    /// Source in a supported language that is deliberately not indexed (vendored or minified).
+    Excluded {
+        reason: &'static str,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -56,21 +61,73 @@ type CacheKey = (ObjectId, String);
 /// Per-file extraction results keyed by (blob id, path).
 ///
 /// Blob ids are content hashes, so a file unchanged between base and head — or between two runs —
-/// is parsed once. The path is part of the key because Java facts record it (and TypeScript module
-/// resolution will depend on it). Failures are cached too: re-parsing a file that timed out would
+/// is parsed once. The path is part of the key because facts record it and TypeScript module
+/// resolution depends on it. Failures are cached too: re-parsing a file that timed out would
 /// just time out again.
 #[derive(Default)]
 pub struct FactCache {
-    java: HashMap<CacheKey, Result<Arc<JavaFile>, String>>,
+    facts: HashMap<CacheKey, Result<Facts, String>>,
     pub hits: usize,
     pub misses: usize,
 }
 
-fn language_of(path: &str) -> Option<Language> {
+#[derive(Clone)]
+enum Facts {
+    Java(Arc<JavaFile>),
+    Ts(Arc<TsFile>),
+}
+
+impl Facts {
+    fn syntax_error_lines(&self) -> &[u32] {
+        match self {
+            Self::Java(f) => &f.syntax_error_lines,
+            Self::Ts(f) => &f.syntax_error_lines,
+        }
+    }
+}
+
+pub(crate) fn language_of(path: &str) -> Option<Language> {
     match path.rsplit_once('.').map(|(_, ext)| ext) {
         Some("java") => Some(Language::Java),
+        Some("ts" | "tsx" | "mts" | "cts") => Some(Language::TypeScript),
+        Some("js" | "jsx" | "mjs" | "cjs") => Some(Language::JavaScript),
         _ => None,
     }
+}
+
+/// Dependencies checked into the tree and minified bundles are not the repository's own code;
+/// indexing them would multiply analysis time and drown real dependents. Reported, not hidden.
+fn exclusion(path: &str) -> Option<&'static str> {
+    if path.split('/').any(|c| c == "node_modules") {
+        Some("vendored dependency (node_modules)")
+    } else if path.ends_with(".min.js") || path.ends_with(".bundle.js") {
+        Some("minified bundle")
+    } else {
+        None
+    }
+}
+
+fn extract(language: Language, path: &str, text: &str, limits: &Limits) -> Result<Facts, String> {
+    let budget = limits.parse_budget;
+    match language {
+        Language::Java => java::extract(path, text, budget).map(|f| Facts::Java(Arc::new(f))),
+        Language::TypeScript | Language::JavaScript => ts::extract(path, text, budget).map(|f| Facts::Ts(Arc::new(f))),
+    }
+    .map_err(|e| e.to_string())
+}
+
+/// Each language resolves on its own; there are no cross-language edges.
+fn merge(parts: [LanguageGraph; 2]) -> LanguageGraph {
+    let mut merged = LanguageGraph::default();
+    for part in parts {
+        merged.symbols.extend(part.symbols);
+        merged.edges.extend(part.edges);
+        merged.unresolved.extend(part.unresolved);
+    }
+    merged.symbols.sort_by(|a, b| a.id.cmp(&b.id));
+    merged.edges.sort();
+    merged.unresolved.sort();
+    merged
 }
 
 pub fn build_snapshot(
@@ -85,7 +142,7 @@ pub fn build_snapshot(
     }
 
     let mut files = Vec::with_capacity(listing.files.len());
-    let mut to_parse: Vec<(CacheKey, String)> = Vec::new();
+    let mut to_parse: Vec<(CacheKey, String, Option<Language>)> = Vec::new();
     for entry in &listing.files {
         let language = language_of(&entry.path);
         let blob = entry.blob;
@@ -93,16 +150,18 @@ pub fn build_snapshot(
             (EntryKind::Symlink, _) => IndexStatus::Symlink,
             (EntryKind::Submodule, _) => IndexStatus::Submodule,
             (_, None) => IndexStatus::NotSource,
-            (_, Some(_)) => IndexStatus::Indexed,
+            (_, Some(_)) => {
+                exclusion(&entry.path).map_or(IndexStatus::Indexed, |reason| IndexStatus::Excluded { reason })
+            }
         };
         if status == IndexStatus::Indexed {
             let key = (blob, entry.path.clone());
-            if cache.java.contains_key(&key) {
+            if cache.facts.contains_key(&key) {
                 cache.hits += 1;
             } else {
                 cache.misses += 1;
                 match repo.read_text(entry.blob, limits.max_file_bytes)? {
-                    BlobContent::Text(text) => to_parse.push((key, text)),
+                    BlobContent::Text(text) => to_parse.push((key, text, language)),
                     BlobContent::Binary => status = IndexStatus::Binary,
                     BlobContent::TooLarge { size } => status = IndexStatus::TooLarge { size },
                 }
@@ -113,25 +172,28 @@ pub fn build_snapshot(
 
     // Parsing dominates indexing time and is independent per file, so it is the one parallel
     // stage. Rayon's pool is bounded by the number of cores.
-    let budget = limits.parse_budget;
-    let parsed: Vec<(CacheKey, Result<Arc<JavaFile>, String>)> = to_parse
+    let parsed: Vec<(CacheKey, Result<Facts, String>)> = to_parse
         .into_par_iter()
-        .map(|(key, text)| {
-            let result = java::extract(&key.1, &text, budget).map(Arc::new).map_err(|e| e.to_string());
-            (key, result)
+        .filter_map(|(key, text, language)| {
+            let result = extract(language?, &key.1, &text, limits);
+            Some((key, result))
         })
         .collect();
-    cache.java.extend(parsed);
+    cache.facts.extend(parsed);
 
-    let mut facts: Vec<Arc<JavaFile>> = Vec::new();
+    let mut java_facts: Vec<Arc<JavaFile>> = Vec::new();
+    let mut ts_facts: Vec<Arc<TsFile>> = Vec::new();
     for file in &mut files {
         if file.status != IndexStatus::Indexed {
             continue;
         }
-        match cache.java.get(&(file.blob, file.path.clone())) {
-            Some(Ok(java_file)) => {
-                file.syntax_error_lines = java_file.syntax_error_lines.clone();
-                facts.push(Arc::clone(java_file));
+        match cache.facts.get(&(file.blob, file.path.clone())) {
+            Some(Ok(facts)) => {
+                file.syntax_error_lines = facts.syntax_error_lines().to_vec();
+                match facts {
+                    Facts::Java(f) => java_facts.push(Arc::clone(f)),
+                    Facts::Ts(f) => ts_facts.push(Arc::clone(f)),
+                }
             }
             Some(Err(message)) => file.status = IndexStatus::ParseFailed { message: message.clone() },
             // Read as binary/oversized above, so never inserted.
@@ -139,8 +201,9 @@ pub fn build_snapshot(
         }
     }
 
-    let borrowed: Vec<&JavaFile> = facts.iter().map(Arc::as_ref).collect();
-    let resolved = java::resolve(&borrowed);
+    let java_refs: Vec<&JavaFile> = java_facts.iter().map(Arc::as_ref).collect();
+    let ts_refs: Vec<&TsFile> = ts_facts.iter().map(Arc::as_ref).collect();
+    let resolved = merge([java::resolve(&java_refs), ts::resolve(&ts_refs)]);
     let graph = CodeGraph::new(resolved.symbols, resolved.edges);
     tracing::debug!(
         revision = %revision.spec,

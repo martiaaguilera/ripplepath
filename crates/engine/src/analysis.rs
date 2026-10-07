@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use ripplepath_core::{ANALYSIS_SCHEMA_VERSION, Edge, EdgeKind, SymbolId, SymbolKind};
 use ripplepath_git::{GitError, Repo};
-use ripplepath_graph::{ImpactOptions, impact};
+use ripplepath_graph::{CodeGraph, ImpactOptions, impact};
 
 use crate::changes::{PathChange, TextStore, classify_symbols, diff_paths, hunks_for};
 use crate::report::*;
@@ -139,8 +139,11 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
     let mut impacted_symbols: Vec<ImpactedSymbolReport> = impacted.into_values().collect();
     impacted_symbols.sort_by(|a, b| (a.depth, &a.id).cmp(&(b.depth, &b.id)));
 
-    let tests = recommend_tests(&changed_symbols, &impacted_symbols);
-    let tests_total = head.graph.symbols().filter(|s| s.is_test && s.kind == SymbolKind::Method).count();
+    let tests = recommend_tests(&head.graph, &changed_symbols, &impacted_symbols);
+    let test_units: Vec<&ripplepath_core::Symbol> =
+        head.graph.symbols().filter(|s| s.is_test && s.kind.is_test_unit()).collect();
+    let tests_total = test_units.len();
+    let tests_selected = selected_test_units(&head.graph, &test_units, &tests);
 
     let truncated = head_impact.truncated || base_impact.truncated;
     let uncertainty = collect_uncertainty(
@@ -186,7 +189,7 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
             symbols_changed: changed_symbols.len(),
             symbols_impacted: impacted_symbols.len(),
             modules_impacted: modules.len(),
-            tests_recommended: tests.len(),
+            tests_recommended: tests_selected,
             tests_total,
             uncertainty_items: uncertainty.len(),
             impact_truncated: truncated,
@@ -209,43 +212,89 @@ fn revision_info(snapshot: &Snapshot) -> RevisionInfo {
     }
 }
 
-fn recommend_tests(changed: &[ChangedSymbol], impacted: &[ImpactedSymbolReport]) -> Vec<TestRecommendation> {
-    let mut tests: Vec<TestRecommendation> = Vec::new();
-    for symbol in
-        changed.iter().filter(|s| s.is_test && s.kind == SymbolKind::Method && s.change != ChangeKind::Deleted)
-    {
-        tests.push(TestRecommendation {
-            id: symbol.id.clone(),
-            name: symbol.name.clone(),
-            file: symbol.file.clone(),
-            reason: TestReason::ChangedTest,
-            depth: 0,
-            root: symbol.id.clone(),
-            weakest_evidence: ripplepath_core::Evidence::ResolvedExact,
-            path: Vec::new(),
-        });
-    }
-    let listed_methods: BTreeSet<&str> =
-        impacted.iter().filter(|s| s.is_test && s.kind == SymbolKind::Method).map(|s| s.id.as_str()).collect();
-    for symbol in impacted.iter().filter(|s| s.is_test) {
-        // A test class is recommended on its own only when none of its methods is: it then runs as
-        // a whole (e.g. because a field or fixture type it declares changed).
-        if symbol.kind != SymbolKind::Method {
-            let prefix = format!("{}#", symbol.id);
-            if listed_methods.iter().any(|m| m.starts_with(&prefix)) {
-                continue;
+/// Number of test units that the recommendations select: listed units plus every unit inside a
+/// listed container.
+fn selected_test_units(head: &CodeGraph, units: &[&ripplepath_core::Symbol], tests: &[TestRecommendation]) -> usize {
+    let listed: BTreeSet<&SymbolId> = tests.iter().map(|t| &t.id).collect();
+    units
+        .iter()
+        .filter(|unit| {
+            let mut current = Some(&unit.id);
+            while let Some(id) = current {
+                if listed.contains(id) {
+                    return true;
+                }
+                current = head.symbol(id).and_then(|s| s.parent.as_ref());
             }
+            false
+        })
+        .count()
+}
+
+/// Test units (methods, test cases) are recommended when they changed or have a static path to a
+/// change. Containers (a Java test class, a TS test file) are recommended when their own code
+/// changed, when shared code inside them (lifecycle hooks, fixtures, helpers) changed or is
+/// impacted — that code runs for every test they contain — or when they are impacted and none of
+/// their units is.
+fn recommend_tests(
+    head: &CodeGraph,
+    changed: &[ChangedSymbol],
+    impacted: &[ImpactedSymbolReport],
+) -> Vec<TestRecommendation> {
+    let container_of = |id: &SymbolId| -> Option<SymbolId> {
+        let mut current = head.symbol(id)?.parent.clone();
+        while let Some(parent) = current {
+            let symbol = head.symbol(&parent)?;
+            if symbol.is_test && !symbol.kind.is_test_unit() {
+                return Some(parent);
+            }
+            current = symbol.parent.clone();
         }
-        tests.push(TestRecommendation {
-            id: symbol.id.clone(),
+        None
+    };
+    let recommendation = |id: &SymbolId, reason, depth, root: &SymbolId, evidence, path: &[ripplepath_graph::Hop]| {
+        head.symbol(id).map(|symbol| TestRecommendation {
+            id: id.clone(),
             name: symbol.name.clone(),
             file: symbol.file.clone(),
-            reason: TestReason::StaticPath,
-            depth: symbol.depth,
-            root: symbol.root.clone(),
-            weakest_evidence: symbol.weakest_evidence,
-            path: symbol.path.clone(),
-        });
+            reason,
+            depth,
+            root: root.clone(),
+            weakest_evidence: evidence,
+            path: path.to_vec(),
+        })
+    };
+
+    let mut tests: Vec<TestRecommendation> = Vec::new();
+    for symbol in changed.iter().filter(|s| s.change != ChangeKind::Deleted) {
+        let exact = ripplepath_core::Evidence::ResolvedExact;
+        if symbol.is_test {
+            tests.extend(recommendation(&symbol.id, TestReason::ChangedTest, 0, &symbol.id, exact, &[]));
+        } else if let Some(container) = container_of(&symbol.id) {
+            tests.extend(recommendation(&container, TestReason::ChangedTest, 0, &symbol.id, exact, &[]));
+        }
+    }
+    let listed_units: BTreeSet<&SymbolId> =
+        impacted.iter().filter(|s| s.is_test && s.kind.is_test_unit()).map(|s| &s.id).collect();
+    for symbol in impacted {
+        let target = if symbol.is_test && symbol.kind.is_test_unit() {
+            Some(symbol.id.clone())
+        } else if symbol.is_test {
+            let has_listed_unit = listed_units.iter().any(|unit| container_of(unit).as_ref() == Some(&symbol.id));
+            (!has_listed_unit).then(|| symbol.id.clone())
+        } else {
+            container_of(&symbol.id)
+        };
+        if let Some(target) = target {
+            tests.extend(recommendation(
+                &target,
+                TestReason::StaticPath,
+                symbol.depth,
+                &symbol.root,
+                symbol.weakest_evidence,
+                &symbol.path,
+            ));
+        }
     }
     tests.sort_by(|a, b| {
         (a.reason, a.depth, std::cmp::Reverse(a.weakest_evidence.strength()), &a.id).cmp(&(
@@ -255,7 +304,9 @@ fn recommend_tests(changed: &[ChangedSymbol], impacted: &[ImpactedSymbolReport])
             &b.id,
         ))
     });
-    tests.dedup_by(|a, b| a.id == b.id);
+    // After sorting, the first entry per id is the strongest reason; `dedup_by` keeps it.
+    let mut seen = BTreeSet::new();
+    tests.retain(|t| seen.insert(t.id.clone()));
     tests
 }
 
@@ -330,6 +381,14 @@ fn collect_uncertainty(
                     None,
                     None,
                     "changed file is not in a supported language; its effects are not traced".to_owned(),
+                )),
+                IndexStatus::Excluded { reason } => items.push(item(
+                    Severity::Low,
+                    UncertaintyKind::ExcludedFile,
+                    Some(&file.path),
+                    None,
+                    None,
+                    format!("not indexed: {reason}"),
                 )),
                 IndexStatus::Symlink | IndexStatus::Submodule => items.push(item(
                     Severity::Low,

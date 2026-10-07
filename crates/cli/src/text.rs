@@ -168,16 +168,23 @@ fn path(out: &mut String, hops: &[Hop]) {
     }
 }
 
-/// `java:com.acme.bank.domain.Account#withdraw(Money)` → `domain.Account#withdraw(Money)`: the
-/// package prefix is mostly noise in a terminal; JSON output keeps full ids.
+/// Shortens ids for terminals; JSON output keeps full ids.
+/// - `java:com.acme.bank.domain.Account#withdraw(Money)` → `domain.Account#withdraw(Money)`
+/// - `ts:src/pricing/discount.ts#applyDiscount` → `discount.ts#applyDiscount`
+/// - `file:src/a/B.java` → `B.java`
 fn display(id: &SymbolId) -> String {
     let raw = id.as_str();
-    let body = raw.split_once(':').map_or(raw, |(_, rest)| rest);
+    let (prefix, body) = raw.split_once(':').unwrap_or(("", raw));
     let (qualified, member) = body.split_once('#').map_or((body, None), |(q, m)| (q, Some(m)));
-    let segments: Vec<&str> = qualified.split('.').collect();
-    let first_type = segments.iter().position(|s| s.chars().next().is_some_and(char::is_uppercase)).unwrap_or(0);
-    let start = first_type.saturating_sub(1);
-    let short = segments[start..].join(".");
+    let short = match prefix {
+        "ts" | "file" => qualified.rsplit('/').next().unwrap_or(qualified).to_owned(),
+        _ => {
+            let segments: Vec<&str> = qualified.split('.').collect();
+            let first_type =
+                segments.iter().position(|s| s.chars().next().is_some_and(char::is_uppercase)).unwrap_or(0);
+            segments[first_type.saturating_sub(1)..].join(".")
+        }
+    };
     match member {
         Some(member) => format!("{short}#{member}"),
         None => short,
@@ -196,6 +203,17 @@ mod tests {
             r"ok
 \u{1b}[31mred\u{1b}[0m \u{202e}evil\u{2066} ünïcode"
         );
+    }
+
+    #[test]
+    fn shortens_ids_per_language() {
+        use super::display;
+        use ripplepath_core::SymbolId;
+        let short = |raw: &str| display(&SymbolId::new(raw));
+        assert_eq!(short("java:com.acme.bank.domain.Account#withdraw(Money)"), "domain.Account#withdraw(Money)");
+        assert_eq!(short("ts:src/pricing/discount.ts#applyDiscount"), "discount.ts#applyDiscount");
+        assert_eq!(short("ts:src/cart.test.ts#test:Cart > totals"), "cart.test.ts#test:Cart > totals");
+        assert_eq!(short("file:src/a/B.java"), "B.java");
     }
 
     #[test]

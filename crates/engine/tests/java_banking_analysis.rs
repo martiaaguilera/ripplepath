@@ -171,3 +171,23 @@ fn graph_slice_contains_changed_and_impacted_nodes_and_their_edges() {
     }
     assert!(!report.graph.clamped);
 }
+
+#[test]
+fn changed_lifecycle_method_recommends_its_whole_test_class() {
+    let dir = tempfile::tempdir().unwrap();
+    let test_v1 = "package p;\nimport org.junit.jupiter.api.*;\nclass LibTest {\n  @BeforeEach void setUp() { }\n  @Test void a() { }\n  @Test void b() { }\n}\n";
+    let test_v2 = test_v1.replace("void setUp() { }", "void setUp() { System.gc(); }");
+    let (v1, v2) = (dir.path().join("v1"), dir.path().join("v2"));
+    for (root, text) in [(&v1, test_v1.to_owned()), (&v2, test_v2)] {
+        std::fs::create_dir_all(root.join("p")).unwrap();
+        std::fs::write(root.join("p/LibTest.java"), text).unwrap();
+    }
+    let repo = dir.path().join("repo");
+    build_fixture_repo(&[&v1, &v2], &repo).unwrap();
+    let report = analyze(&AnalyzeOptions::new(&repo, "main~1", "main")).unwrap();
+
+    let ids: Vec<&str> = report.tests.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, vec!["java:p.LibTest"], "setUp runs before every test, so the class is recommended");
+    assert_eq!(report.tests[0].reason, TestReason::ChangedTest);
+    assert_eq!(report.tests[0].root.as_str(), "java:p.LibTest#setUp()");
+}

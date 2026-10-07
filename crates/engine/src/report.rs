@@ -42,6 +42,7 @@ pub struct Summary {
     pub symbols_changed: usize,
     pub symbols_impacted: usize,
     pub modules_impacted: usize,
+    /// Test units selected by the recommendations (units inside a recommended container count).
     pub tests_recommended: usize,
     pub tests_total: usize,
     pub uncertainty_items: usize,
@@ -139,7 +140,7 @@ pub enum GraphSide {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TestReason {
-    /// The test itself changed.
+    /// The test, or shared code inside its test class/file, changed.
     ChangedTest,
     /// A static dependency path connects the test to a changed symbol.
     StaticPath,
@@ -182,6 +183,7 @@ pub enum UncertaintyKind {
     RenameDetectionSkipped,
     ImpactTruncated,
     SymlinkOrSubmodule,
+    ExcludedFile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

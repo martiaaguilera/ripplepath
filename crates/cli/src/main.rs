@@ -50,6 +50,9 @@ enum Command {
         /// Where to create the demo repository (must not exist yet).
         #[arg(long, default_value = "ripplepath-demo")]
         dir: PathBuf,
+        /// Which bundled fixture to build.
+        #[arg(long, value_enum, default_value_t = DemoFixture::JavaBanking)]
+        fixture: DemoFixture,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
     },
@@ -74,6 +77,21 @@ struct AnalyzeArgs {
     /// Maximum dependency depth to follow from changed symbols.
     #[arg(long, default_value_t = 6, value_parser = clap::value_parser!(u32).range(1..=32))]
     max_depth: u32,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum DemoFixture {
+    JavaBanking,
+    TypescriptCheckout,
+}
+
+impl DemoFixture {
+    fn dir_name(self) -> &'static str {
+        match self {
+            Self::JavaBanking => "java-banking",
+            Self::TypescriptCheckout => "typescript-checkout",
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -142,11 +160,11 @@ fn run(command: Command) -> Result<(), String> {
             let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
             runtime.block_on(ripplepath_server::serve(config)).map_err(|e| e.to_string())
         }
-        Command::Demo { dir, format } => {
+        Command::Demo { dir, fixture, format } => {
             if dir.exists() {
                 return Err(format!("{} already exists; choose another --dir", dir.display()));
             }
-            let fixtures = demo_fixture_root()?;
+            let fixtures = demo_fixture_root(fixture.dir_name())?;
             fixture::build_fixture_repo(&[&fixtures.join("v1"), &fixtures.join("v2")], &dir)
                 .map_err(|e| e.to_string())?;
             let report = analyze(&AnalyzeOptions::new(&dir, "main~1", "main")).map_err(|e| e.to_string())?;
@@ -162,11 +180,9 @@ fn run(command: Command) -> Result<(), String> {
 }
 
 /// The demo ships with the source tree; look next to the binary's workspace or the current dir.
-fn demo_fixture_root() -> Result<PathBuf, String> {
-    let candidates = [
-        PathBuf::from("fixtures/java-banking"),
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/java-banking"),
-    ];
+fn demo_fixture_root(name: &str) -> Result<PathBuf, String> {
+    let candidates =
+        [Path::new("fixtures").join(name), Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures").join(name)];
     candidates
         .into_iter()
         .find(|p| p.join("v1").is_dir())
