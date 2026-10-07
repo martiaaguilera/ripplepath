@@ -30,6 +30,8 @@ Status: controls listed here are implemented and tested unless marked *planned*.
 | Request floods | At most 2 concurrent analyses; permit held inside the blocking task so client disconnects cannot release it early. | design |
 | Malformed revision input | 1–256 chars, no control characters; passed to gix rev-parse, never a shell. | API test |
 | Malicious XML (coverage/JUnit) | *Planned* with ingestion: no DTD/entity expansion, size caps. | — |
+| Forged index shipped inside an analysed repository | The default index lives in the user cache directory (keyed by canonical repo path), never in the working tree; the index is trusted local state. | `default_db` |
+| Escape sequences in stored values reaching the terminal | Stored values in errors are escaped and truncated; all CLI error output is neutralised. | `corrupt`, CLI `main` |
 | Source leakage via logs | Logs contain revision specs, counts and timings; never file contents. | review |
 
 ## Non-goals

@@ -61,7 +61,7 @@ cargo build --release
 ./target/release/ripplepath demo                       # builds a Java fixture repo and analyses it
 ./target/release/ripplepath demo --fixture typescript-checkout --dir ts-demo
 ./target/release/ripplepath analyze --repo . --base main --head HEAD --format json > analysis.json
-./target/release/ripplepath index --repo . --rev HEAD   # persistent, incremental index in .ripplepath/
+./target/release/ripplepath index --repo . --rev HEAD   # persistent, incremental index (user cache dir)
 
 cd web && npm ci && npm run build && cd ..
 ./target/release/ripplepath serve --repo ripplepath-demo --base main~1 --head main

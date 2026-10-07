@@ -99,7 +99,8 @@ version ⇒ byte-identical JSON. `analysis.json` carries `schema_version`.
   listed container; `summary.tests_total` counts all test units in head.
 
 ## 8. Persistent incremental index [implemented]
-- `ripplepath index --rev R` stores the graph of R in SQLite (`.ripplepath/index.db` by default).
+- `ripplepath index --rev R` stores the graph of R in SQLite, by default in the user cache directory
+  (never inside the analysed repository, which could otherwise ship a forged index).
 - Facts are cached per (blob id, path, extractor version); only changed files are parsed.
 - Resolution runs over the whole snapshot; stored rows are updated by difference and the run
   reports the delta (symbols/edges added, removed, updated).

@@ -12,6 +12,7 @@ name = "ripplepath"
 path = "src/main.rs"
 
 [dependencies]
+blake3.workspace = true
 ripplepath-core.workspace = true
 ripplepath-engine.workspace = true
 ripplepath-graph.workspace = true

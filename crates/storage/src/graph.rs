@@ -64,7 +64,14 @@ fn text<T: serde::Serialize>(value: &T) -> String {
 }
 
 fn parse<T: serde::de::DeserializeOwned>(column: &'static str, raw: String) -> Result<T, StorageError> {
-    serde_json::from_value(Value::String(raw.clone())).map_err(|_| StorageError::Corrupt { column, value: raw })
+    serde_json::from_value(Value::String(raw.clone())).map_err(|_| corrupt(column, &raw))
+}
+
+/// Error for an unreadable stored value. The value is escaped and truncated: it came from a file on
+/// disk and ends up in terminal output and logs.
+pub(crate) fn corrupt(column: &'static str, raw: &str) -> StorageError {
+    let value: String = raw.chars().take(64).flat_map(char::escape_debug).collect();
+    StorageError::Corrupt { column, value }
 }
 
 type EdgeKey = (SymbolId, SymbolId, EdgeKind);
@@ -123,7 +130,7 @@ impl Store {
                 visibility: parse("symbols.visibility", visibility)?,
                 is_test,
                 fingerprint: Fingerprint::try_from(fingerprint.clone())
-                    .map_err(|_| StorageError::Corrupt { column: "symbols.fingerprint", value: fingerprint })?,
+                    .map_err(|_| corrupt("symbols.fingerprint", &fingerprint))?,
             });
         }
 

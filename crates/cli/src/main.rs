@@ -31,7 +31,7 @@ enum Command {
         repo: PathBuf,
         #[arg(long, default_value = "HEAD")]
         rev: String,
-        /// Database file [default: <repo>/.ripplepath/index.db].
+        /// Database file [default: a per-repository file in the user cache directory].
         #[arg(long)]
         db: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = Format::Text)]
@@ -89,7 +89,7 @@ struct AnalyzeArgs {
     /// Maximum dependency depth to follow from changed symbols.
     #[arg(long, default_value_t = 6, value_parser = clap::value_parser!(u32).range(1..=32))]
     max_depth: u32,
-    /// Reuse and fill a persistent fact cache (e.g. `.ripplepath/index.db`).
+    /// Reuse and fill a persistent fact cache. Must not live inside an untrusted repository.
     #[arg(long)]
     db: Option<PathBuf>,
 }
@@ -121,7 +121,8 @@ fn main() -> ExitCode {
     match run(cli.command) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            eprintln!("error: {message}");
+            // Errors can quote repository content (paths, revisions, stored values).
+            eprintln!("error: {}", text::neutralize_terminal_controls(&message));
             ExitCode::FAILURE
         }
     }
@@ -152,7 +153,10 @@ fn run(command: Command) -> Result<(), String> {
             emit(&report, args.format, args.output.as_deref())
         }
         Command::Index { repo, rev, db, format } => {
-            let db = db.unwrap_or_else(|| repo.join(".ripplepath").join("index.db"));
+            let db = match db {
+                Some(db) => db,
+                None => default_db(&repo)?,
+            };
             let outcome = ripplepath_engine::index_revision(&repo, &rev, &db, &ripplepath_engine::Limits::default())
                 .map_err(|e| e.to_string())?;
             let d = outcome.delta;
@@ -247,6 +251,22 @@ fn run(command: Command) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// Default index location: the user's cache directory, keyed by the repository's canonical path.
+///
+/// Never inside the analysed repository: a repository could commit its own `.ripplepath/index.db`
+/// with forged facts for its own blob ids and so control the analysis of itself.
+fn default_db(repo: &Path) -> Result<PathBuf, String> {
+    let canonical = repo.canonicalize().map_err(|e| format!("cannot resolve {}: {e}", repo.display()))?;
+    let base = std::env::var_os("RIPPLEPATH_CACHE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("ripplepath")))
+        .or_else(|| std::env::var_os("XDG_CACHE_HOME").map(|d| PathBuf::from(d).join("ripplepath")))
+        .or_else(|| std::env::var_os("HOME").map(|d| PathBuf::from(d).join(".cache").join("ripplepath")))
+        .ok_or("no cache directory found; pass --db or set RIPPLEPATH_CACHE_DIR")?;
+    let key = blake3::hash(canonical.to_string_lossy().as_bytes()).to_hex();
+    Ok(base.join(format!("{}.db", &key[..16])))
 }
 
 /// The demo ships with the source tree; look next to the binary's workspace or the current dir.
