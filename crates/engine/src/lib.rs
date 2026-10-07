@@ -10,6 +10,7 @@ mod snapshot;
 pub use analysis::{AnalysisError, AnalyzeOptions, analyze};
 pub use limits::Limits;
 pub use report::*;
+pub use ripplepath_git::GitError;
 pub use snapshot::{FactCache, Snapshot, SnapshotFile, build_snapshot};
 
 pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");

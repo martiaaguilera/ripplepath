@@ -16,6 +16,13 @@ ripplepath-git = { path = "crates/git" }
 ripplepath-lang = { path = "crates/lang" }
 ripplepath-graph = { path = "crates/graph" }
 ripplepath-engine = { path = "crates/engine" }
+ripplepath-server = { path = "crates/server" }
+
+axum = "0.8.9"
+http-body-util = "0.1.5"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = ["fs", "set-header", "trace"] }
 
 blake3 = "1.8.7"
 clap = { version = "4.6.7", features = ["derive"] }

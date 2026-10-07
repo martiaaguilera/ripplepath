@@ -25,6 +25,22 @@ struct Cli {
 enum Command {
     /// Analyse the change between two revisions.
     Analyze(AnalyzeArgs),
+    /// Serve the web UI and the read-only HTTP API for one repository (localhost by default).
+    Serve {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        /// Address to bind. Binding beyond localhost exposes source code to the network.
+        #[arg(long, default_value = "127.0.0.1:7878")]
+        addr: std::net::SocketAddr,
+        /// Built web UI directory.
+        #[arg(long, default_value = "web/dist")]
+        web_dir: PathBuf,
+        /// Revisions the UI opens with.
+        #[arg(long, default_value = "HEAD~1")]
+        base: String,
+        #[arg(long, default_value = "HEAD")]
+        head: String,
+    },
     /// Build the bundled demo repository and analyse its change.
     Demo {
         /// Where to create the demo repository (must not exist yet).
@@ -96,6 +112,25 @@ fn run(command: Command) -> Result<(), String> {
             options.impact = ImpactOptions { max_depth: args.max_depth, ..ImpactOptions::default() };
             let report = analyze(&options).map_err(|e| e.to_string())?;
             emit(&report, args.format, args.output.as_deref())
+        }
+        Command::Serve { repo, addr, web_dir, base, head } => {
+            if !addr.ip().is_loopback() {
+                eprintln!("warning: listening on {addr}; anyone who can reach it can read analysed source metadata");
+            }
+            let web_dir = if web_dir.join("index.html").is_file() {
+                Some(web_dir)
+            } else {
+                eprintln!(
+                    "note: {} has no built UI (run `npm run build` in web/); serving the API only",
+                    web_dir.display()
+                );
+                None
+            };
+            eprintln!("Ripplepath listening on http://{addr}");
+            let config =
+                ripplepath_server::ServerConfig { repo, addr, web_dir, default_base: base, default_head: head };
+            let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+            runtime.block_on(ripplepath_server::serve(config)).map_err(|e| e.to_string())
         }
         Command::Demo { dir, format } => {
             if dir.exists() {
