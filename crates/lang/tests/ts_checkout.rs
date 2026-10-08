@@ -298,50 +298,25 @@ export function run() { x(); }
 
 #[test]
 fn many_members_and_suite_locals_stay_linear() {
-    let members: String = (0..50_000)
-        .map(|i| {
-            format!(
-                "  m{i}() {{}}
-"
-            )
-        })
-        .collect();
-    let started = std::time::Instant::now();
-    let file = ts::extract(
-        "big.ts",
-        &format!(
-            "export class Big {{
-{members}}}
-"
-        ),
-        Duration::from_secs(60),
-    )
-    .unwrap();
-    assert_eq!(file.decls[0].members.len(), 50_000);
-
-    let locals: String = (0..5_000)
-        .map(|i| {
-            format!(
-                "  let v{i} = {i};
-"
-            )
-        })
-        .collect();
-    let tests: String = (0..5_000)
-        .map(|i| {
-            format!(
-                "  it('t{i}', () => {{}});
-"
-            )
-        })
-        .collect();
-    let suite = format!(
-        "describe('s', () => {{
-{locals}{tests}}});
-"
-    );
-    ts::extract("big.test.ts", &suite, Duration::from_secs(60)).unwrap();
-    assert!(started.elapsed() < Duration::from_secs(20), "took {:?}", started.elapsed());
+    // Growth, not absolute time: other tests in this binary run in parallel. 4x the input must cost
+    // well under the 16x of a quadratic member merge or per-test copy of suite locals.
+    fn time(size: usize) -> Duration {
+        let members: String = (0..size).map(|i| format!("  m{i}() {{}}\n")).collect();
+        let locals: String = (0..size / 10).map(|i| format!("  let v{i} = {i};\n")).collect();
+        let tests: String = (0..size / 10).map(|i| format!("  it('t{i}', () => {{}});\n")).collect();
+        let started = std::time::Instant::now();
+        let file =
+            ts::extract("big.ts", &format!("export class Big {{\n{members}}}\n"), Duration::from_secs(120)).unwrap();
+        assert_eq!(file.decls[0].members.len(), size);
+        ts::extract("big.test.ts", &format!("describe('s', () => {{\n{locals}{tests}}});\n"), Duration::from_secs(120))
+            .unwrap();
+        started.elapsed()
+    }
+    let best = |size| (0..3).map(|_| time(size)).min().unwrap_or_default();
+    let small = best(5_000);
+    let large = best(20_000);
+    let ratio = large.as_secs_f64() / small.as_secs_f64().max(1e-3);
+    assert!(ratio < 9.0, "4x input took {ratio:.1}x time ({small:?} -> {large:?})");
 }
 
 #[test]
