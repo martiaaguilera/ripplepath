@@ -159,6 +159,13 @@ pub fn ingest_coverage(
                 }
                 continue;
             };
+            outcome.mapped += 1;
+            // Tools list files without executable lines too (JaCoCo: an interface; V8: a type-only
+            // module). Nothing in them could have run, so they do not count as measured; otherwise
+            // every abstract method in them would read as NOT_COVERED.
+            if file.lines.is_empty() {
+                continue;
+            }
             files.insert(path.to_owned());
             let index = LineIndex::new(&snapshot, path);
             for (&line, &hit) in &file.lines {
@@ -168,7 +175,6 @@ pub fn ingest_coverage(
             }
         }
         outcome.reports += 1;
-        outcome.mapped += files.len();
         outcome.unmapped += unmapped as usize;
         outcome.covered_symbols += covered.len();
         store.add_coverage(&StoredCoverage {
