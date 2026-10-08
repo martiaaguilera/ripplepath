@@ -72,7 +72,7 @@ pub fn load_revision(
         Err(other) => return Err(other),
     };
     let mut evidence = match cache.store_mut() {
-        Some(store) => LoadedEvidence::load(store)?,
+        Some(store) => LoadedEvidence::load(store, None)?,
         None => LoadedEvidence::default(),
     };
     evidence.mark_other_commits(snapshot.revision.commit.as_deref(), None);

@@ -1,0 +1,15 @@
+{
+  "cases": [
+    { "name": "v1..v2", "base": "main~11", "head": "main~10", "junit": ["evidence/v2/junit/run-1.xml"] },
+    { "name": "v2..v3", "base": "main~10", "head": "main~9", "junit": ["evidence/v3/junit/run-1.xml"] },
+    { "name": "v3..v4", "base": "main~9", "head": "main~8", "junit": ["evidence/v4/junit/run-1.xml"] },
+    { "name": "v4..v5", "base": "main~8", "head": "main~7", "junit": ["evidence/v5/junit/run-1.xml"] },
+    { "name": "v5..v6", "base": "main~7", "head": "main~6", "junit": ["evidence/v6/junit/run-1.xml"] },
+    { "name": "v6..v7", "base": "main~6", "head": "main~5", "junit": ["evidence/v7/junit/run-1.xml"] },
+    { "name": "v7..v8", "base": "main~5", "head": "main~4", "junit": ["evidence/v8/junit/run-1.xml"] },
+    { "name": "v8..v9", "base": "main~4", "head": "main~3", "junit": ["evidence/v9/junit/run-1.xml"] },
+    { "name": "v9..v10", "base": "main~3", "head": "main~2", "junit": ["evidence/v10/junit/run-1.xml"] },
+    { "name": "v10..v11", "base": "main~2", "head": "main~1", "junit": ["evidence/v11/junit/run-1.xml"] },
+    { "name": "v11..v12", "base": "main~1", "head": "main", "junit": ["evidence/v12/junit/run-1.xml"] }
+  ]
+}

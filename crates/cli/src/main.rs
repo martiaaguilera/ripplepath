@@ -7,6 +7,7 @@ use ripplepath_engine::{AnalysisReport, AnalyzeOptions, analyze, fixture};
 use ripplepath_graph::ImpactOptions;
 
 mod annotations;
+mod evaluate_text;
 mod findings;
 mod markdown;
 mod output;
@@ -47,6 +48,23 @@ enum Command {
     /// Record test evidence (coverage, CI results) for a revision.
     #[command(subcommand)]
     Ingest(IngestCommand),
+    /// Replay historical changes and score the test selection against the tests that failed.
+    Evaluate {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        /// JSON file listing cases: {"cases": [{"name", "base", "head", "junit": [files]}]}; the
+        /// JUnit files (relative to the cases file) are the observed run at head.
+        #[arg(long)]
+        cases: PathBuf,
+        /// Index and evidence database holding the history's coverage and CI results.
+        #[arg(long)]
+        db: PathBuf,
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+        /// Write the report to this file instead of stdout.
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
     /// Serve the web UI and the read-only HTTP API for one repository (localhost by default).
     Serve {
         #[arg(long, default_value = ".")]
@@ -427,6 +445,21 @@ fn run_other(command: Command) -> Result<(), String> {
             print!("{}", text::neutralize_terminal_controls(&text));
             Ok(())
         }
+        Command::Evaluate { repo, cases, db, format, output } => {
+            use ripplepath_engine::evaluation;
+            let cases = evaluation::load_cases(&cases).map_err(|e| e.to_string())?;
+            let report = evaluation::evaluate(&evaluation::EvaluationOptions::new(&repo, &db), &cases)
+                .map_err(|e| e.to_string())?;
+            let rendered = match format {
+                Format::Json => {
+                    let mut json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+                    json.push('\n');
+                    json
+                }
+                Format::Text => text::neutralize_terminal_controls(&evaluate_text::render(&report)),
+            };
+            write_output(&rendered, output.as_deref())
+        }
         Command::Serve { repo, addr, web_dir, base, head, allowed_hosts } => {
             if !addr.ip().is_loopback() {
                 eprintln!("warning: listening on {addr}; anyone who can reach it can read analysed source metadata");
@@ -528,6 +561,10 @@ fn emit(report: &AnalysisReport, format: Format, output: Option<&Path>) -> Resul
         }
         Format::Text => text::render(report),
     };
+    write_output(&rendered, output)
+}
+
+fn write_output(rendered: &str, output: Option<&Path>) -> Result<(), String> {
     match output {
         Some(path) => std::fs::write(path, rendered).map_err(|e| format!("cannot write {}: {e}", path.display())),
         None => write_stdout(&rendered),

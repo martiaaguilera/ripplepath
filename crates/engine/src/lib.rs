@@ -6,6 +6,7 @@ pub mod architecture;
 mod assess;
 mod changes;
 pub mod config;
+pub mod evaluation;
 mod evidence;
 pub mod explore;
 pub mod fixture;
@@ -23,7 +24,7 @@ mod test_evidence;
 
 pub use analysis::{AnalysisError, AnalyzeOptions, analyze};
 pub use assess::{ArchitectureCheck, ConfigChange, ConfigReport, ConfigSource, check_architecture};
-pub use evidence::{CoverageFormat, CoverageInput, IngestOutcome, ingest_coverage, ingest_junit};
+pub use evidence::{CoverageFormat, CoverageInput, IngestOutcome, ingest_coverage, ingest_coverage_batch, ingest_junit};
 pub use index::{IndexOutcome, index_revision, indexed_graph};
 pub use limits::Limits;
 pub use report::*;
