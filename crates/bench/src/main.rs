@@ -129,6 +129,18 @@ enum Measure {
         #[arg(long)]
         no_probe: bool,
     },
+    /// The I/O inside `build_snapshot`, timed on its own: listing the tree, reading every source
+    /// blob, and (with --db) looking up every file's cached facts.
+    Inputs {
+        #[arg(long)]
+        repo: PathBuf,
+        #[arg(long)]
+        rev: String,
+        #[arg(long)]
+        db: Option<PathBuf>,
+        #[arg(long)]
+        no_probe: bool,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -217,6 +229,7 @@ fn measure(m: Measure) -> Result<Value> {
         Measure::Graph { db, queries, seed, builds, no_probe } => {
             (graph_queries(&db, queries, seed, builds)?, no_probe)
         }
+        Measure::Inputs { repo, rev, db, no_probe } => (inputs(&repo, &rev, db.as_deref(), &limits)?, no_probe),
     };
     if !no_probe {
         let probe = probe_self();
@@ -315,6 +328,62 @@ fn index_phases(repo: &Path, rev: &str, db: &Path, limits: &Limits) -> Result<Va
         "edges": snapshot.graph.edges().len(),
         "delta": delta_json(&delta),
     }))
+}
+
+fn inputs(repo: &Path, rev: &str, db: Option<&Path>, limits: &Limits) -> Result<Value> {
+    let git = ripplepath_git::Repo::open(repo)?;
+    let revision = git.resolve(rev)?;
+    let t = Instant::now();
+    let listing = git.list_files(revision.tree)?;
+    let list_ms = ms(t);
+    let sources: Vec<_> = listing
+        .files
+        .iter()
+        .filter_map(|f| {
+            let path = f.path.as_str();
+            let extractor = if path.ends_with(".java") {
+                "java/4"
+            } else if [".ts", ".tsx", ".js", ".jsx"].iter().any(|e| path.ends_with(e)) {
+                "ts/2"
+            } else {
+                return None;
+            };
+            Some((f, extractor))
+        })
+        .collect();
+    let t = Instant::now();
+    let mut blob_bytes = 0usize;
+    for (file, _) in &sources {
+        if let ripplepath_git::BlobContent::Text(text) = git.read_text(file.blob, limits.max_file_bytes)? {
+            blob_bytes += text.len();
+        }
+    }
+    let read_ms = ms(t);
+    let mut value = json!({
+        "source_files": sources.len(),
+        "list_files_ms": list_ms,
+        "read_blobs_sequential_ms": read_ms,
+        "blob_bytes": blob_bytes,
+    });
+    if let Some(db) = db {
+        let store = Store::open(db)?;
+        let t = Instant::now();
+        let (mut hits, mut payload_bytes) = (0usize, 0usize);
+        // Extractor keys mirror `ripplepath_engine::snapshot::extractor_key`; zero hits on a warm
+        // database means they drifted, and the measurement is reported as such rather than trusted.
+        for (file, extractor) in &sources {
+            if let Some(ripplepath_storage::CachedFacts::Ok(bytes)) =
+                store.cached_facts(&file.blob.to_string(), &file.path, extractor)?
+            {
+                hits += 1;
+                payload_bytes += bytes.len();
+            }
+        }
+        value["cached_facts_lookups_ms"] = json!(ms(t));
+        value["cached_facts_hits"] = json!(hits);
+        value["cached_facts_payload_bytes"] = json!(payload_bytes);
+    }
+    Ok(value)
 }
 
 fn graph_queries(db: &Path, queries: usize, seed: u64, builds: usize) -> Result<Value> {
