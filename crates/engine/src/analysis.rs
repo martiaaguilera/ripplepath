@@ -44,6 +44,9 @@ pub struct AnalyzeOptions {
     /// static evidence only.
     pub db: Option<PathBuf>,
     pub mode: SelectionMode,
+    /// When set, only test evidence recorded at these commits is used. Replay evaluation sets it
+    /// to the ancestors of base so that results measured at head or later cannot leak in.
+    pub evidence_commits: Option<BTreeSet<String>>,
 }
 
 impl AnalyzeOptions {
@@ -58,6 +61,7 @@ impl AnalyzeOptions {
             unresolved_cap: 200,
             db: None,
             mode: SelectionMode::Balanced,
+            evidence_commits: None,
         }
     }
 }
@@ -77,7 +81,7 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
     let indexed_at = started.elapsed();
 
     let mut evidence = match cache.store_mut() {
-        Some(store) => LoadedEvidence::load(store)?,
+        Some(store) => LoadedEvidence::load(store, options.evidence_commits.as_ref())?,
         None => LoadedEvidence::default(),
     };
     evidence.mark_other_commits(base.revision.commit.as_deref(), head.revision.commit.as_deref());

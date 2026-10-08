@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="JUnit Jupiter" tests="17" skipped="0" failures="3" errors="0" time="0.221" hostname="redacted" timestamp="2026-10-08T16:15:37">
+<testcase name="percentRoundsHalfUp()" classname="com.acme.shop.domain.MoneyTest" time="0.016">
+<failure message="expected: &lt;0.53 EUR&gt; but was: &lt;0.52 EUR&gt;" type="org.opentest4j.AssertionFailedError"><![CDATA[org.opentest4j.AssertionFailedError: expected: <0.53 EUR> but was: <0.52 EUR>
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:1199)
+	at com.acme.shop.domain.MoneyTest.percentRoundsHalfUp(MoneyTest.java:21)
+]]></failure>
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:percentRoundsHalfUp()]
+display-name: JUnit Jupiter > MoneyTest > percentRoundsHalfUp()
+]]></system-out>
+</testcase>
+<testcase name="unknownCountryIsRefused()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0.002">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.TaxCalculatorTest]/[method:unknownCountryIsRefused()]
+display-name: JUnit Jupiter > TaxCalculatorTest > unknownCountryIsRefused()
+]]></system-out>
+</testcase>
+<testcase name="totalsDiscountTaxAndShipping()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.005">
+<failure message="expected: &lt;4.73 EUR&gt; but was: &lt;4.72 EUR&gt;" type="org.opentest4j.AssertionFailedError"><![CDATA[org.opentest4j.AssertionFailedError: expected: <4.73 EUR> but was: <4.72 EUR>
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:1199)
+	at com.acme.shop.application.CheckoutServiceTest.totalsDiscountTaxAndShipping(CheckoutServiceTest.java:32)
+]]></failure>
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.application.CheckoutServiceTest]/[method:totalsDiscountTaxAndShipping()]
+display-name: JUnit Jupiter > CheckoutServiceTest > totalsDiscountTaxAndShipping()
+]]></system-out>
+</testcase>
+<testcase name="subtotalSumsLineItems()" classname="com.acme.shop.domain.OrderTest" time="0.001">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.OrderTest]/[method:subtotalSumsLineItems()]
+display-name: JUnit Jupiter > OrderTest > subtotalSumsLineItems()
+]]></system-out>
+</testcase>
+<testcase name="rejectsPercentAbove100()" classname="com.acme.shop.pricing.PercentageDiscountTest" time="0.002">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.PercentageDiscountTest]/[method:rejectsPercentAbove100()]
+display-name: JUnit Jupiter > PercentageDiscountTest > rejectsPercentAbove100()
+]]></system-out>
+</testcase>
+<testcase name="formatsAsEuros()" classname="com.acme.shop.domain.MoneyTest" time="0.057">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:formatsAsEuros()]
+display-name: JUnit Jupiter > MoneyTest > formatsAsEuros()
+]]></system-out>
+</testcase>
+<testcase name="reservesStockForEveryItem()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.015">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.application.CheckoutServiceTest]/[method:reservesStockForEveryItem()]
+display-name: JUnit Jupiter > CheckoutServiceTest > reservesStockForEveryItem()
+]]></system-out>
+</testcase>
+<testcase name="refusesMoreThanAvailable()" classname="com.acme.shop.inventory.InventoryTest" time="0.003">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.inventory.InventoryTest]/[method:refusesMoreThanAvailable()]
+display-name: JUnit Jupiter > InventoryTest > refusesMoreThanAvailable()
+]]></system-out>
+</testcase>
+<testcase name="allowsReservingExactlyAllStock()" classname="com.acme.shop.inventory.InventoryTest" time="0.001">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.inventory.InventoryTest]/[method:allowsReservingExactlyAllStock()]
+display-name: JUnit Jupiter > InventoryTest > allowsReservingExactlyAllStock()
+]]></system-out>
+</testcase>
+<testcase name="addsAndSubtracts()" classname="com.acme.shop.domain.MoneyTest" time="0.01">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:addsAndSubtracts()]
+display-name: JUnit Jupiter > MoneyTest > addsAndSubtracts()
+]]></system-out>
+</testcase>
+<testcase name="reservesAvailableStock()" classname="com.acme.shop.inventory.InventoryTest" time="0.001">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.inventory.InventoryTest]/[method:reservesAvailableStock()]
+display-name: JUnit Jupiter > InventoryTest > reservesAvailableStock()
+]]></system-out>
+</testcase>
+<testcase name="minusNeverGoesBelowZero()" classname="com.acme.shop.domain.MoneyTest" time="0.001">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:minusNeverGoesBelowZero()]
+display-name: JUnit Jupiter > MoneyTest > minusNeverGoesBelowZero()
+]]></system-out>
+</testcase>
+<testcase name="loadsRatesFromResource()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0.001">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.TaxCalculatorTest]/[method:loadsRatesFromResource()]
+display-name: JUnit Jupiter > TaxCalculatorTest > loadsRatesFromResource()
+]]></system-out>
+</testcase>
+<testcase name="rejectsNonPositiveQuantity()" classname="com.acme.shop.domain.OrderTest" time="0.004">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.OrderTest]/[method:rejectsNonPositiveQuantity()]
+display-name: JUnit Jupiter > OrderTest > rejectsNonPositiveQuantity()
+]]></system-out>
+</testcase>
+<testcase name="takesPercentOfSubtotal()" classname="com.acme.shop.pricing.PercentageDiscountTest" time="0.003">
+<failure message="expected: &lt;2.00 EUR&gt; but was: &lt;1.99 EUR&gt;" type="org.opentest4j.AssertionFailedError"><![CDATA[org.opentest4j.AssertionFailedError: expected: <2.00 EUR> but was: <1.99 EUR>
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:1199)
+	at com.acme.shop.pricing.PercentageDiscountTest.takesPercentOfSubtotal(PercentageDiscountTest.java:15)
+]]></failure>
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.PercentageDiscountTest]/[method:takesPercentOfSubtotal()]
+display-name: JUnit Jupiter > PercentageDiscountTest > takesPercentOfSubtotal()
+]]></system-out>
+</testcase>
+<testcase name="freeShippingFromThreshold()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.003">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.application.CheckoutServiceTest]/[method:freeShippingFromThreshold()]
+display-name: JUnit Jupiter > CheckoutServiceTest > freeShippingFromThreshold()
+]]></system-out>
+</testcase>
+<testcase name="taxIsRateOfNetAmount()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.TaxCalculatorTest]/[method:taxIsRateOfNetAmount()]
+display-name: JUnit Jupiter > TaxCalculatorTest > taxIsRateOfNetAmount()
+]]></system-out>
+</testcase>
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]
+display-name: JUnit Jupiter
+]]></system-out>
+</testsuite>

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use gix::traverse::tree::Recorder;
@@ -14,6 +15,10 @@ pub enum GitError {
     NotATree { spec: String },
     #[error("failed to read Git object {id}: {message}")]
     Object { id: String, message: String },
+    #[error("'{0}' is not a commit id")]
+    NotACommit(String),
+    #[error("history of {commit} has more than {limit} commits")]
+    HistoryTooLong { commit: String, limit: usize },
 }
 
 pub struct Repo {
@@ -94,6 +99,33 @@ impl Repo {
         };
         let tree = object.peel_to_tree().map_err(|_| GitError::NotATree { spec: spec.to_owned() })?;
         Ok(Revision { spec: spec.to_owned(), commit, tree: tree.id })
+    }
+
+    /// `commit` and every commit reachable from it through parents, as hex ids.
+    ///
+    /// Refuses (rather than truncates) histories above `limit`: callers use this set to decide
+    /// which evidence existed before a commit, and a silently partial set would change results
+    /// without saying so. In a shallow clone the walk stops at the shallow boundary.
+    pub fn ancestors(&self, commit: &str, limit: usize) -> Result<BTreeSet<String>, GitError> {
+        let start = gix::ObjectId::from_hex(commit.as_bytes()).map_err(|_| GitError::NotACommit(commit.to_owned()))?;
+        let mut seen: BTreeSet<gix::ObjectId> = BTreeSet::new();
+        let mut queue = vec![start];
+        while let Some(id) = queue.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if seen.len() > limit {
+                return Err(GitError::HistoryTooLong { commit: commit.to_owned(), limit });
+            }
+            let found = match self.inner.find_commit(id) {
+                Ok(found) => found,
+                // Parents beyond a shallow boundary are absent from the object database.
+                Err(_) if id != start && self.inner.is_shallow() => continue,
+                Err(e) => return Err(object_error(id, e)),
+            };
+            queue.extend(found.parent_ids().map(|p| p.detach()));
+        }
+        Ok(seen.into_iter().map(|id| id.to_string()).collect())
     }
 
     /// Lists every non-directory entry of `tree`, sorted by path.

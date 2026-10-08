@@ -2,6 +2,7 @@
 
 mod analysis;
 mod changes;
+pub mod evaluation;
 mod evidence;
 pub mod fixture;
 mod history;
@@ -14,7 +15,9 @@ mod snapshot;
 mod test_evidence;
 
 pub use analysis::{AnalysisError, AnalyzeOptions, analyze};
-pub use evidence::{CoverageFormat, CoverageInput, IngestOutcome, ingest_coverage, ingest_junit};
+pub use evidence::{
+    CoverageFormat, CoverageInput, IngestOutcome, ingest_coverage, ingest_coverage_batch, ingest_junit,
+};
 pub use index::{IndexOutcome, index_revision, indexed_graph};
 pub use limits::Limits;
 pub use report::*;

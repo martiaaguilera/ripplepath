@@ -116,15 +116,33 @@ impl Store {
     /// The most recent report per test symbol (and the most recent aggregate report). Older
     /// reports for the same test are superseded: coverage describes the code as it was measured.
     pub fn latest_coverage(&self) -> Result<Vec<StoredCoverage>, StorageError> {
+        self.latest_coverage_among(None)
+    }
+
+    /// Like [`Store::latest_coverage`], but only reports measured at one of `commits` are
+    /// candidates (all reports with `None`). The restriction applies *before* choosing the latest
+    /// report per test, so a newer report from an excluded commit cannot hide an older visible one.
+    pub fn latest_coverage_among(
+        &self,
+        commits: Option<&BTreeSet<String>>,
+    ) -> Result<Vec<StoredCoverage>, StorageError> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT id, commit_id, format, test_symbol, source, unmapped_files FROM coverage_reports c
-             WHERE id = (SELECT MAX(id) FROM coverage_reports d WHERE d.test_symbol IS c.test_symbol)
-             ORDER BY test_symbol",
+            "SELECT id, commit_id, format, test_symbol, source, unmapped_files FROM coverage_reports ORDER BY id",
         )?;
-        let reports: Vec<(i64, String, String, Option<String>, String, u32)> = stmt
+        type Row = (i64, String, String, Option<String>, String, u32);
+        let rows: Vec<Row> = stmt
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?
             .collect::<Result<_, _>>()?;
+        // Rows are in ingestion order, so the last one kept per test is the latest. `None` (the
+        // aggregate report) sorts first, as NULL does in SQLite.
+        let mut latest: BTreeMap<Option<String>, Row> = BTreeMap::new();
+        for row in rows {
+            if commits.is_none_or(|allowed| allowed.contains(&row.1)) {
+                latest.insert(row.3.clone(), row);
+            }
+        }
+        let reports: Vec<Row> = latest.into_values().collect();
         let mut files_stmt = conn.prepare("SELECT path FROM coverage_files WHERE report_id = ?1")?;
         let mut covered_stmt = conn.prepare("SELECT symbol_id FROM covered_symbols WHERE report_id = ?1")?;
         let mut out = Vec::with_capacity(reports.len());
@@ -184,5 +202,27 @@ mod tests {
         assert!(latest.iter().any(|r| r.test_symbol.is_none() && r.covered.contains("agg")));
         assert!(latest.iter().any(|r| r.test_symbol.as_deref() == Some("t") && r.covered.contains("new")));
         assert!(!latest.iter().any(|r| r.covered.contains("old")));
+    }
+
+    #[test]
+    fn restricting_commits_happens_before_choosing_the_latest_report() {
+        let mut store = Store::open_in_memory().unwrap();
+        let report = |commit: &str, covered: &str| StoredCoverage {
+            commit: commit.into(),
+            format: "jacoco".into(),
+            test_symbol: Some("t".into()),
+            source: "x".into(),
+            unmapped_files: 0,
+            files: BTreeSet::new(),
+            covered: BTreeSet::from([covered.to_owned()]),
+        };
+        store.add_coverage(&report("old", "a")).unwrap();
+        store.add_coverage(&report("new", "b")).unwrap();
+        let visible = BTreeSet::from(["old".to_owned()]);
+        let latest = store.latest_coverage_among(Some(&visible)).unwrap();
+        assert_eq!(latest.len(), 1);
+        assert_eq!(latest[0].commit, "old", "the excluded newer report must not hide the visible one");
+        assert!(store.latest_coverage_among(Some(&BTreeSet::new())).unwrap().is_empty());
+        assert_eq!(store.latest_coverage().unwrap()[0].commit, "new");
     }
 }
