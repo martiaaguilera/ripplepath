@@ -1,0 +1,95 @@
+name: Action self-test
+
+# Runs the composite action from this checkout (`uses: ./`) with a ripplepath built from source:
+# (a) on this repository's own change, (b) on the java-banking demo repository, whose change adds a
+# domain -> api dependency and must therefore FAIL the merge policy.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: action-selftest-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  selftest:
+    name: Composite action on this repository and the demo
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The PR comment; pull requests from forks get a read-only token and the action skips it.
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked -p ripplepath-cli
+
+      - name: (a) Analyse this change with the action
+        id: self
+        uses: ./
+        with:
+          binary-path: target/debug/ripplepath
+          base: ${{ github.event_name == 'workflow_dispatch' && 'HEAD~1' || '' }}
+          comment: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+          artifact-name: ripplepath-self
+          output-dir: ${{ runner.temp }}/self
+
+      - name: Build the java-banking demo repository
+        run: ./target/debug/ripplepath demo --dir ripplepath-demo > /dev/null
+
+      - name: (b) Analyse the demo with the action (policy must FAIL)
+        id: fixture
+        continue-on-error: true
+        uses: ./
+        with:
+          binary-path: target/debug/ripplepath
+          repo-path: ripplepath-demo
+          base: main~1
+          head: main
+          step-summary: "true"
+          artifact-name: ripplepath-fixture
+          output-dir: ${{ runner.temp }}/fixture
+
+      - name: Assert outcomes
+        env:
+          SELF_OUTCOME: ${{ steps.self.outcome }}
+          SELF_POLICY: ${{ steps.self.outputs.policy }}
+          FIXTURE_OUTCOME: ${{ steps.fixture.outcome }}
+          FIXTURE_EXIT: ${{ steps.fixture.outputs.exit-code }}
+          FIXTURE_POLICY: ${{ steps.fixture.outputs.policy }}
+        run: |
+          set -euo pipefail
+          echo "self: outcome=$SELF_OUTCOME policy=$SELF_POLICY"
+          echo "fixture: outcome=$FIXTURE_OUTCOME exit=$FIXTURE_EXIT policy=$FIXTURE_POLICY"
+          test "$SELF_OUTCOME" = success
+          test "$FIXTURE_OUTCOME" = failure
+          test "$FIXTURE_EXIT" = 2
+          test "$FIXTURE_POLICY" = FAIL
+          for dir in self fixture; do
+            for file in analysis.json summary.md ripplepath.sarif annotations.txt; do
+              test -s "$RUNNER_TEMP/$dir/$file" || { echo "missing $dir/$file"; exit 1; }
+            done
+          done
+          jq -e '.policy.result == "FAIL"' "$RUNNER_TEMP/fixture/analysis.json"
+          jq -e '[.policy.gates[] | select(.gate == "new_architecture_violation")][0].status == "FAIL"' "$RUNNER_TEMP/fixture/analysis.json"
+          grep -q '^## Ripplepath — Change Intelligence$' "$RUNNER_TEMP/fixture/summary.md"
+          # Annotation paths are prefixed with the repository's location in the workspace.
+          grep -q '^::error file=ripplepath-demo/src/main/java/com/acme/bank/domain/Account.java,line=3,' "$RUNNER_TEMP/fixture/annotations.txt"
+
+      - name: Validate SARIF against the OASIS SARIF 2.1.0 schema
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/sarif-schema-2.1.0.json" \
+            https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json
+          pipx run check-jsonschema==0.38.2 --schemafile "$RUNNER_TEMP/sarif-schema-2.1.0.json" \
+            "$RUNNER_TEMP/self/ripplepath.sarif" "$RUNNER_TEMP/fixture/ripplepath.sarif"

@@ -1,0 +1,183 @@
+name: Ripplepath change intelligence
+description: >-
+  Symbol-level blast radius, test selection, architecture drift, risk decomposition and merge-policy
+  gates for a pull request or push. Reads Git objects only; never builds or runs the analysed code.
+author: Martí Aguilera
+branding:
+  icon: git-pull-request
+  color: blue
+
+inputs:
+  base:
+    description: >-
+      Base revision. Default: the pull request's base SHA (pull_request), the previous tip
+      (push: github.event.before) or the merge group's base SHA (merge_group).
+    required: false
+    default: ""
+  head:
+    description: Head revision. Default HEAD, i.e. what actions/checkout checked out (the merge commit for pull_request).
+    required: false
+    default: ""
+  repo-path:
+    description: Path of the repository to analyse, relative to the workspace.
+    required: false
+    default: "."
+  mode:
+    description: Test selection mode (conservative, balanced, fast-feedback). Default from the base revision's ripplepath.yml, else balanced.
+    required: false
+    default: ""
+  fail-on-policy:
+    description: Fail the step (exit status 2) when the merge policy result is FAIL.
+    required: false
+    default: "true"
+  step-summary:
+    description: Append the Markdown summary to the job's step summary.
+    required: false
+    default: "true"
+  annotations:
+    description: Emit file/line annotations for located findings.
+    required: false
+    default: "true"
+  comment:
+    description: Create or update one pull request comment with the summary. Needs 'pull-requests write'; skipped on fork PRs.
+    required: false
+    default: "false"
+  sarif:
+    description: Upload ripplepath.sarif to GitHub code scanning. Needs 'security-events write'; skipped on fork PRs.
+    required: false
+    default: "false"
+  sarif-category:
+    description: Code scanning category, to keep Ripplepath's alerts apart from other tools'.
+    required: false
+    default: ripplepath
+  upload-artifact:
+    description: Upload the output directory (analysis.json, summary.md, ripplepath.sarif, annotations.txt) as a workflow artifact.
+    required: false
+    default: "true"
+  artifact-name:
+    description: Artifact name; must be unique per workflow run when the action is used more than once.
+    required: false
+    default: ripplepath
+  output-dir:
+    description: Where the outputs are written. Default RUNNER_TEMP/ripplepath-<artifact-name>.
+    required: false
+    default: ""
+  version:
+    description: >-
+      Ripplepath release to download (e.g. v0.2.0), or 'source' to build the action's own checkout
+      with cargo. Default: the release matching the action's tag ref, else a source build.
+    required: false
+    default: ""
+  binary-path:
+    description: Use this ripplepath binary instead of downloading or building one.
+    required: false
+    default: ""
+  release-repository:
+    description: Repository whose releases provide prebuilt binaries.
+    required: false
+    default: martiaaguilera/ripplepath
+  github-token:
+    description: Token for the pull request comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  policy:
+    description: Merge policy result (PASS, WARN or FAIL).
+    value: ${{ steps.analyze.outputs.policy }}
+  risk-score:
+    description: Risk score 0-100. A decomposition of review signals, not a probability.
+    value: ${{ steps.analyze.outputs.risk-score }}
+  risk-level:
+    description: Risk band (LOW, MEDIUM, HIGH, CRITICAL).
+    value: ${{ steps.analyze.outputs.risk-level }}
+  exit-code:
+    description: Exit status of ripplepath analyze --fail-on-policy (0 ok, 2 policy FAIL, other = error).
+    value: ${{ steps.analyze.outputs.exit-code }}
+  output-dir:
+    description: Directory containing analysis.json, summary.md, ripplepath.sarif and annotations.txt.
+    value: ${{ steps.analyze.outputs.output-dir }}
+  summary-file:
+    description: Path of the Markdown summary.
+    value: ${{ steps.analyze.outputs.summary-file }}
+  sarif-file:
+    description: Path of the SARIF file.
+    value: ${{ steps.analyze.outputs.sarif-file }}
+
+runs:
+  using: composite
+  steps:
+    - name: Provide ripplepath
+      id: install
+      shell: bash
+      env:
+        INPUT_BINARY_PATH: ${{ inputs.binary-path }}
+        INPUT_VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+        ACTION_PATH: ${{ github.action_path }}
+        RELEASE_REPOSITORY: ${{ inputs.release-repository }}
+      run: bash "$ACTION_PATH/action/install.sh"
+
+    - name: Analyse change
+      id: analyze
+      shell: bash
+      env:
+        RIPPLEPATH_BIN: ${{ steps.install.outputs.bin }}
+        INPUT_BASE: ${{ inputs.base }}
+        INPUT_HEAD: ${{ inputs.head }}
+        INPUT_REPO_PATH: ${{ inputs.repo-path }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
+        INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        INPUT_STEP_SUMMARY: ${{ inputs.step-summary }}
+        INPUT_ANNOTATIONS: ${{ inputs.annotations }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PUSH_BEFORE: ${{ github.event.before }}
+        MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "$ACTION_PATH/action/analyze.sh"
+
+    - name: Upload outputs
+      if: always() && inputs.upload-artifact == 'true' && steps.analyze.outputs.output-dir != ''
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.analyze.outputs.output-dir }}
+        if-no-files-found: ignore
+        retention-days: 14
+
+    - name: Upload SARIF to code scanning
+      if: >-
+        inputs.sarif == 'true' && steps.analyze.outcome == 'success'
+        && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ steps.analyze.outputs.sarif-file }}
+        category: ${{ inputs.sarif-category }}
+
+    - name: Comment on pull request
+      if: inputs.comment == 'true' && steps.analyze.outcome == 'success'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        SUMMARY_FILE: ${{ steps.analyze.outputs.summary-file }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "$ACTION_PATH/action/comment.sh"
+
+    - name: Enforce merge policy
+      if: steps.analyze.outcome == 'success'
+      shell: bash
+      env:
+        EXIT_CODE: ${{ steps.analyze.outputs.exit-code }}
+        FAIL_ON_POLICY: ${{ inputs.fail-on-policy }}
+        POLICY: ${{ steps.analyze.outputs.policy }}
+      run: |
+        if [ "$EXIT_CODE" = "2" ] && [ "$FAIL_ON_POLICY" = "true" ]; then
+          echo "Ripplepath merge policy: $POLICY (fail-on-policy is on)"
+          exit 2
+        fi
+        echo "Ripplepath merge policy: $POLICY"
