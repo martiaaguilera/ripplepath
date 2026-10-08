@@ -69,6 +69,16 @@ cd web && npm ci && npm run build && cd ..
 # open http://127.0.0.1:7878
 ```
 
+## For coding agents (MCP)
+
+`ripplepath mcp --repo .` serves read-only [Model Context Protocol](https://modelcontextprotocol.io)
+tools over stdio, so an agent can ask *before* editing: what depends on this method (`what_if`), how
+are these two symbols connected (`dependency_path`), which tests should run and does this change
+break an architecture rule (`tests_for_change`, `architecture_status`). Answers carry the same
+evidence (edge kind, evidence class, file:line) and uncertainty as the report. Claude Code:
+`claude mcp add ripplepath -- ripplepath mcp --repo .`. Details and security model:
+[docs/MCP.md](docs/MCP.md).
+
 ## How it works
 
 1. Resolve `base` and `head` to trees; list files; pair renames (exact blob, then ≥ 50% line similarity).
@@ -96,7 +106,7 @@ Details: [docs/SPEC.md](docs/SPEC.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.
 
 Architecture rules and base/head drift · versioned deterministic risk decomposition ·
 GitHub Action with step summary and SARIF · offline selection evaluation ·
-benchmarks · read-only MCP server.
+benchmarks.
 
 ## Author
 

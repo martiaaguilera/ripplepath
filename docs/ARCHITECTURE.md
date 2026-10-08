@@ -19,15 +19,15 @@ Status: Java and TypeScript/JavaScript frontends. Planned components are marked 
 | `core` | `SymbolId`, `Symbol`, `Edge`, `EdgeKind`, `Evidence`, `Fingerprint`. Plain data with total orderings. | none |
 | `git` | Open repo (isolated config), resolve revisions, list trees, read blobs with size cap, path validation, line diff, rename pairing. | object DB only |
 | `lang` | Language frontends `java` and `ts`, each `extract` (per file, pure) + `resolve` (per snapshot, pure). Languages resolve independently; no cross-language edges. | none |
-| `graph` | `CodeGraph` (sorted edges, adjacency indices) and `impact` (BFS with explaining paths). | none |
+| `graph` | `CodeGraph` (sorted edges, adjacency indices), `impact` (BFS with explaining paths) and `dependency_path` (shortest evidence-ranked chain between two symbols). | none |
 | `evidence` | Bounded parsers for JaCoCo XML, LCOV and JUnit XML (no entity expansion). Test evidence semantics: docs/TEST_INTELLIGENCE.md. | none |
 | `storage` | SQLite: migrations, persistent fact cache, indexed graph updated by difference. | one DB file |
 | `engine` | Orchestration: snapshots, fact cache, change classification, hunks, uncertainty, report. Pure modules `config`, `architecture`, `owners`, `api_surface`, `risk`, `policy`; `assess` reads `ripplepath.yml` (base) and CODEOWNERS (head) through `git` and calls them. | via `git` |
-| `cli` | `ripplepath analyze | index | ingest | architecture check | serve | demo`. Text renderer neutralises terminal control characters. Exit 2 on policy failure with `--fail-on-policy`. | stdout/files |
+| `cli` | `ripplepath analyze | index | ingest | architecture check | serve | mcp | demo`. Text renderer neutralises terminal control characters. Exit 2 on policy failure with `--fail-on-policy`. | stdout/files |
+| `mcp` | Read-only Model Context Protocol adapter over stdio (hand-written JSON-RPC, dual-era: 2026-07-28 stateless and handshake revisions). Tools project engine output; single-revision queries via `engine::explore` (`what_if`, symbol info, paths). ADR 0007, docs/MCP.md. | stdio |
 | `server` | Axum API `/api/v1/*` + static UI, Host validation, CSP, bounded analysis concurrency. | HTTP |
 | `web/` | React + TypeScript strict UI. Renders the report; never infers relationships. | HTTP |
 
-Planned: `mcp`.
 
 ## Assessment stage
 
@@ -81,3 +81,5 @@ Tokio's blocking pool, at most 2 at a time; the permit is held inside the blocki
 | CODEOWNERS | 3 MB (GitHub's limit) | ignored, reported in `owners.errors` |
 | Listed violations / coupling pairs / API changes / owner files | 500 / 100 / 500 / 500 | `*_truncated: true`, counts stay complete |
 | Evidence per risk signal / gate | 50 | `evidence_truncated` count |
+| MCP message / tool result | 1 MiB / 512 KiB | `-32600` / tool error asking to narrow the query |
+| MCP listed items, path search | per tool (docs/MCP.md); 8 hops (max 16), 50 000 symbols | `truncation` notices, `search_truncated` |
