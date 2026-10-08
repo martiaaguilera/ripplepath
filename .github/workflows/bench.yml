@@ -1,0 +1,59 @@
+name: Benchmarks
+
+# Heavy, noisy on shared runners, and not a merge gate: run on demand and weekly, never per PR.
+# Results are uploaded as an artifact; published numbers in docs/BENCHMARKS.md come from runs whose
+# hardware is recorded alongside them.
+on:
+  workflow_dispatch:
+    inputs:
+      sizes:
+        description: Synthetic dataset sizes (source files, space-separated)
+        default: "1000 5000 20000"
+      iterations:
+        description: Runs per workload
+        default: "5"
+      real_repo:
+        description: Optional public Git URL to benchmark as well (HEAD~1..HEAD)
+        default: ""
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  bench:
+    name: Benchmark harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Clone the optional real repository (read only; nothing in it is executed)
+        if: ${{ inputs.real_repo != '' }}
+        env:
+          REAL_URL: ${{ inputs.real_repo }}
+        run: git clone --no-checkout -- "$REAL_URL" "$RUNNER_TEMP/real-repo"
+      - name: Run benchmarks
+        env:
+          SIZES: ${{ inputs.sizes || '1000 5000 20000' }}
+          ITERATIONS: ${{ inputs.iterations || '5' }}
+          WORK: ${{ runner.temp }}/bench-work
+          REAL_REPO: ${{ inputs.real_repo != '' && format('{0}/real-repo', runner.temp) || '' }}
+        run: scripts/bench.sh "$RUNNER_TEMP/bench-results"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bench-results-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/bench-results/*.json
+            ${{ runner.temp }}/bench-results/*.md
+            ${{ runner.temp }}/bench-results/*.txt
+          retention-days: 90

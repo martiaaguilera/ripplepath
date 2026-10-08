@@ -1,0 +1,36 @@
+[package]
+name = "ripplepath-bench"
+description = "Ripplepath benchmark harness: deterministic synthetic repositories and measured workloads"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "ripplepath-bench"
+path = "src/main.rs"
+
+[[bench]]
+name = "core"
+harness = false
+
+[dependencies]
+ripplepath-core.workspace = true
+ripplepath-engine.workspace = true
+ripplepath-git.workspace = true
+ripplepath-graph.workspace = true
+ripplepath-lang.workspace = true
+ripplepath-storage.workspace = true
+clap.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
