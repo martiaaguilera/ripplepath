@@ -225,12 +225,25 @@ enum DemoFixture {
     TypescriptCheckout,
 }
 
+/// The demo fixtures, embedded at build time (see build.rs): the demo never reads the current
+/// directory, so running it inside an untrusted checkout cannot substitute that checkout's files.
+mod demo_fixtures {
+    include!(concat!(env!("OUT_DIR"), "/demo_fixtures.rs"));
+}
+
 impl DemoFixture {
-    fn dir_name(self) -> &'static str {
-        match self {
-            Self::JavaBanking => "java-banking",
-            Self::TypescriptCheckout => "typescript-checkout",
-        }
+    fn snapshots(self) -> Vec<fixture::Snapshot> {
+        let embedded = match self {
+            Self::JavaBanking => demo_fixtures::JAVA_BANKING,
+            Self::TypescriptCheckout => demo_fixtures::TYPESCRIPT_CHECKOUT,
+        };
+        embedded
+            .iter()
+            .map(|(name, files)| fixture::Snapshot {
+                name: (*name).to_owned(),
+                files: files.iter().map(|(path, bytes)| ((*path).to_owned(), bytes.to_vec())).collect(),
+            })
+            .collect()
     }
 }
 
@@ -504,9 +517,7 @@ fn run_other(command: Command) -> Result<(), String> {
             if dir.exists() {
                 return Err(format!("{} already exists; choose another --dir", dir.display()));
             }
-            let fixtures = demo_fixture_root(fixture.dir_name())?;
-            fixture::build_fixture_repo(&[&fixtures.join("v1"), &fixtures.join("v2")], &dir)
-                .map_err(|e| e.to_string())?;
+            fixture::build_repo_from_snapshots(&fixture.snapshots(), &dir).map_err(|e| e.to_string())?;
             let report = analyze(&AnalyzeOptions::new(&dir, "main~1", "main")).map_err(|e| e.to_string())?;
             emit(&report, format, None)?;
             eprintln!(
@@ -546,16 +557,6 @@ fn default_db(repo: &Path) -> Result<PathBuf, String> {
         .ok_or("no cache directory found; pass --db or set RIPPLEPATH_CACHE_DIR")?;
     let key = blake3::hash(canonical.to_string_lossy().as_bytes()).to_hex();
     Ok(base.join(format!("{}.db", &key[..16])))
-}
-
-/// The demo ships with the source tree; look next to the binary's workspace or the current dir.
-fn demo_fixture_root(name: &str) -> Result<PathBuf, String> {
-    let candidates =
-        [Path::new("fixtures").join(name), Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures").join(name)];
-    candidates
-        .into_iter()
-        .find(|p| p.join("v1").is_dir())
-        .ok_or_else(|| "demo fixtures not found; run from the Ripplepath source directory".to_owned())
 }
 
 fn emit(report: &AnalysisReport, format: Format, output: Option<&Path>) -> Result<(), String> {
