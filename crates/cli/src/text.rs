@@ -4,7 +4,9 @@
 use std::fmt::Write;
 
 use ripplepath_core::SymbolId;
-use ripplepath_engine::{AnalysisReport, ChangeKind, Severity, TestReason};
+use ripplepath_engine::{
+    AnalysisReport, ChangeKind, CoverageStatus, Reliability, SelectionDecision, Severity, TestReason,
+};
 use ripplepath_graph::Hop;
 
 const LIST_LIMIT: usize = 25;
@@ -80,13 +82,25 @@ fn render_raw(report: &AnalysisReport) -> String {
 
     section(&mut out, "Changed symbols");
     for symbol in report.changed_symbols.iter().take(LIST_LIMIT) {
+        let coverage = match symbol.coverage {
+            Some(CoverageStatus::Covered) => "  [covered]",
+            Some(CoverageStatus::NotCovered) => "  [NOT covered by any recorded test]",
+            Some(CoverageStatus::NoData) => "  [no coverage data]",
+            None => "",
+        };
         let label = match symbol.change {
             ChangeKind::Added => "added",
             ChangeKind::Deleted => "deleted",
             ChangeKind::Modified => "modified",
             ChangeKind::SignatureChanged => "signature",
         };
-        let _ = writeln!(out, "  {label:<9} {}  ({}:{})", display(&symbol.id), symbol.file, symbol.span.start_line);
+        let _ = writeln!(
+            out,
+            "  {label:<9} {}  ({}:{}){coverage}",
+            display(&symbol.id),
+            symbol.file,
+            symbol.span.start_line
+        );
         if let Some(previous) = &symbol.previous_id {
             let _ = writeln!(out, "            was {}", display(previous));
         }
@@ -96,23 +110,59 @@ fn render_raw(report: &AnalysisReport) -> String {
     }
     more(&mut out, report.changed_symbols.len());
 
-    section(&mut out, "Recommended tests (static evidence only; not a guarantee of coverage)");
-    if report.tests.is_empty() {
-        let _ = writeln!(out, "  none found — no test has a static dependency path to the change");
+    let selection = &report.test_selection;
+    let decision = match selection.decision {
+        SelectionDecision::Selected => format!("run {} of {} tests", selection.selected_units, selection.total_units),
+        SelectionDecision::FullSuite => "run the FULL SUITE".to_owned(),
+    };
+    let runtime = match (selection.selected_runtime_ms, selection.full_runtime_ms) {
+        (Some(selected), Some(full)) => format!("  |  recorded runtime {} of {}", duration(selected), duration(full)),
+        _ => String::new(),
+    };
+    section(&mut out, &format!("Test selection ({:?} mode): {decision}{runtime}", selection.mode));
+    for reason in &selection.fallback_reasons {
+        let _ = writeln!(out, "  {} {}: {}", severity(reason.severity), reason.code, reason.detail);
     }
-    for test in report.tests.iter().take(LIST_LIMIT) {
+    for note in &selection.notes {
+        let _ = writeln!(out, "  note: {note}");
+    }
+    let ev = &report.evidence;
+    if ev.coverage_reports > 0 || ev.test_runs > 0 {
+        let _ = writeln!(
+            out,
+            "  evidence: {} coverage report(s) ({} from other commits), {} coverage edges, {} CI run(s)",
+            ev.coverage_reports, ev.coverage_reports_other_commits, ev.coverage_edges, ev.test_runs
+        );
+    } else {
+        let _ = writeln!(out, "  evidence: static analysis only (no coverage or CI history ingested)");
+    }
+
+    section(&mut out, "Recommended tests, in run order (decision support, not proof of safety)");
+    if report.tests.is_empty() {
+        let _ = writeln!(out, "  none found — no test has evidence of exercising the change");
+    }
+    let by_id: std::collections::BTreeMap<_, _> = report.tests.iter().map(|t| (&t.id, t)).collect();
+    let ordered = selection.ordered.iter().filter_map(|id| by_id.get(id).copied());
+    for test in ordered.take(LIST_LIMIT) {
+        let history = test.history.as_ref().map_or_else(String::new, |h| {
+            let reliability = match h.reliability {
+                Reliability::Stable => "stable",
+                Reliability::Flaky => "FLAKY",
+                Reliability::ConsistentlyFailing => "FAILING",
+                Reliability::InsufficientData => "few runs",
+            };
+            let median = h.median_duration_ms.map_or_else(String::new, |d| format!(", median {}", duration(d)));
+            format!("  [{reliability}: {}/{} runs failed{median}]", h.failures, h.runs)
+        });
+        let _ = writeln!(out, "  {:?}  {}{history}", test.tier, display(&test.id));
         match test.reason {
             TestReason::ChangedTest => {
-                let _ = writeln!(out, "  {}  — test itself changed", display(&test.id));
+                let _ = writeln!(out, "      test code changed");
             }
             TestReason::StaticPath => {
-                let _ = writeln!(
-                    out,
-                    "  {}  — depth {}, weakest evidence {:?}",
-                    display(&test.id),
-                    test.depth,
-                    test.weakest_evidence
-                );
+                let measured = if test.coverage_observed { ", includes measured coverage" } else { "" };
+                let _ =
+                    writeln!(out, "      depth {}, weakest evidence {:?}{measured}", test.depth, test.weakest_evidence);
                 let _ = writeln!(out, "      changed      {}", display(&test.root));
                 path(&mut out, &test.path);
             }
@@ -131,11 +181,7 @@ fn render_raw(report: &AnalysisReport) -> String {
         let _ = writeln!(out, "  none recorded");
     }
     for item in report.uncertainty.iter().take(LIST_LIMIT) {
-        let severity = match item.severity {
-            Severity::High => "HIGH",
-            Severity::Medium => "MED ",
-            Severity::Low => "LOW ",
-        };
+        let severity = severity(item.severity);
         let location = match (&item.file, item.line) {
             (Some(file), Some(line)) => format!("{file}:{line}: "),
             (Some(file), None) => format!("{file}: "),
@@ -145,6 +191,24 @@ fn render_raw(report: &AnalysisReport) -> String {
     }
     more(&mut out, report.uncertainty.len());
     out
+}
+
+fn severity(severity: Severity) -> &'static str {
+    match severity {
+        Severity::High => "HIGH",
+        Severity::Medium => "MED ",
+        Severity::Low => "LOW ",
+    }
+}
+
+fn duration(ms: u64) -> String {
+    if ms >= 60_000 {
+        format!("{}m{:02}s", ms / 60_000, (ms % 60_000) / 1000)
+    } else if ms >= 1000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else {
+        format!("{ms}ms")
+    }
 }
 
 fn section(out: &mut String, title: &str) {

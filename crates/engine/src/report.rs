@@ -6,6 +6,8 @@
 
 use ripplepath_core::{Edge, Evidence, Language, Span, SymbolId, SymbolKind, Visibility};
 use ripplepath_graph::Hop;
+
+pub use crate::history::{Reliability, TestHistory};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +27,10 @@ pub struct AnalysisReport {
     pub tests: Vec<TestRecommendation>,
     /// Sorted by (severity, kind, file, line, detail).
     pub uncertainty: Vec<Uncertainty>,
+    /// What to run, in which order, and whether the evidence is good enough to run less than all.
+    pub test_selection: TestSelection,
+    /// Which persisted evidence this analysis used.
+    pub evidence: EvidenceSummary,
     /// Bounded subgraph for visualisation: changed + impacted symbols and the edges among them.
     pub graph: GraphSlice,
 }
@@ -68,8 +74,33 @@ pub struct FileChange {
     /// Present for renames: share of lines common to both sides, in percent.
     pub similarity: Option<u8>,
     pub language: Option<Language>,
+    /// High-impact non-code surface (build, lockfile, migration, …) recognised by path.
+    pub category: Option<FileCategory>,
     /// Empty for binary, oversized or unparsed files.
     pub hunks: Vec<HunkReport>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FileCategory {
+    Migration,
+    Lockfile,
+    Build,
+    Ci,
+    Container,
+    Config,
+}
+
+/// Measured coverage of a symbol, from the latest ingested reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CoverageStatus {
+    /// Some test run executed it.
+    Covered,
+    /// Its file was measured, but no recorded run executed it.
+    NotCovered,
+    /// No coverage report contains its file.
+    NoData,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +141,8 @@ pub struct ChangedSymbol {
     pub span: Span,
     pub visibility: Visibility,
     pub is_test: bool,
+    /// `None` when no coverage has been ingested or the symbol has no executable code.
+    pub coverage: Option<CoverageStatus>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,6 +161,7 @@ pub struct ImpactedSymbolReport {
     /// deleted symbols.
     pub graph: GraphSide,
     pub path: Vec<Hop>,
+    pub coverage: Option<CoverageStatus>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -142,8 +176,21 @@ pub enum GraphSide {
 pub enum TestReason {
     /// The test, or shared code inside its test class/file, changed.
     ChangedTest,
-    /// A static dependency path connects the test to a changed symbol.
+    /// A dependency path connects the test to a changed symbol (its hops say whether any is
+    /// measured coverage rather than static structure).
     StaticPath,
+}
+
+/// How strong the evidence is that this test exercises the change. Ordinal, not a probability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum EvidenceTier {
+    /// The test changed, or coverage measured it executing the change's dependency path.
+    Strong,
+    /// A static path of exactly resolved edges.
+    Medium,
+    /// A static path including inferred edges.
+    Weak,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,6 +204,66 @@ pub struct TestRecommendation {
     pub root: SymbolId,
     pub weakest_evidence: Evidence,
     pub path: Vec<Hop>,
+    pub tier: EvidenceTier,
+    /// True when a hop of the path is measured coverage (`TESTS` with `COVERAGE_OBSERVED`).
+    pub coverage_observed: bool,
+    pub history: Option<TestHistory>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SelectionMode {
+    /// Everything with any evidence; fall back to the full suite on any uncertainty.
+    Conservative,
+    /// Everything with any evidence, best first; fall back to the full suite on serious uncertainty.
+    Balanced,
+    /// The few highest-value tests first; never a claim of complete validation.
+    FastFeedback,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SelectionDecision {
+    /// Run the listed tests.
+    Selected,
+    /// Evidence is too weak to run less than everything.
+    FullSuite,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct FallbackReason {
+    pub severity: Severity,
+    pub code: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TestSelection {
+    pub mode: SelectionMode,
+    pub decision: SelectionDecision,
+    /// Sorted; every reason that widened (or, in fast-feedback mode, would widen) the selection.
+    pub fallback_reasons: Vec<FallbackReason>,
+    /// Recommended tests in run order (ids from `tests`).
+    pub ordered: Vec<SymbolId>,
+    /// Test units the selection runs, and all test units in head.
+    pub selected_units: usize,
+    pub total_units: usize,
+    /// Sum of median recorded durations; present only when every counted unit has history.
+    pub selected_runtime_ms: Option<u64>,
+    pub full_runtime_ms: Option<u64>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidenceSummary {
+    /// Latest coverage report per test (plus aggregate) used.
+    pub coverage_reports: usize,
+    /// Of those, measured at a commit other than base or head.
+    pub coverage_reports_other_commits: usize,
+    /// `TESTS` edges added to the head graph from coverage.
+    pub coverage_edges: usize,
+    pub test_runs: usize,
+    pub tests_with_history: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -182,6 +289,7 @@ pub enum UncertaintyKind {
     RejectedPath,
     RenameDetectionSkipped,
     ImpactTruncated,
+    StaleCoverage,
     SymlinkOrSubmodule,
     ExcludedFile,
 }

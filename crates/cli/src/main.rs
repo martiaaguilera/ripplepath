@@ -37,6 +37,9 @@ enum Command {
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
     },
+    /// Record test evidence (coverage, CI results) for a revision.
+    #[command(subcommand)]
+    Ingest(IngestCommand),
     /// Serve the web UI and the read-only HTTP API for one repository (localhost by default).
     Serve {
         #[arg(long, default_value = ".")]
@@ -70,6 +73,53 @@ enum Command {
     },
 }
 
+#[derive(Subcommand)]
+enum IngestCommand {
+    /// Ingest a coverage report (JaCoCo XML or LCOV) measured at a revision.
+    Coverage {
+        file: PathBuf,
+        #[arg(long, value_enum)]
+        format: CoverageArg,
+        #[command(flatten)]
+        target: IngestTarget,
+        /// The test whose execution produced this report: a symbol id, test file path or Java test
+        /// class. Without it, LCOV test names (TN) are used, else the report is aggregate.
+        #[arg(long)]
+        test: Option<String>,
+    },
+    /// Ingest a JUnit XML results file from a CI run at a revision.
+    Junit {
+        file: PathBuf,
+        #[command(flatten)]
+        target: IngestTarget,
+    },
+}
+
+#[derive(clap::Args)]
+struct IngestTarget {
+    #[arg(long, default_value = ".")]
+    repo: PathBuf,
+    /// Revision the evidence was produced at.
+    #[arg(long, default_value = "HEAD")]
+    rev: String,
+    /// Database file [default: a per-repository file in the user cache directory].
+    #[arg(long)]
+    db: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum CoverageArg {
+    Jacoco,
+    Lcov,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ModeArg {
+    Conservative,
+    Balanced,
+    FastFeedback,
+}
+
 #[derive(clap::Args)]
 struct AnalyzeArgs {
     /// Repository to analyse.
@@ -89,9 +139,13 @@ struct AnalyzeArgs {
     /// Maximum dependency depth to follow from changed symbols.
     #[arg(long, default_value_t = 6, value_parser = clap::value_parser!(u32).range(1..=32))]
     max_depth: u32,
-    /// Reuse and fill a persistent fact cache. Must not live inside an untrusted repository.
+    /// Index and evidence database [default: the per-repository file `ripplepath index` uses, if it
+    /// exists]. Must not live inside an untrusted repository.
     #[arg(long)]
     db: Option<PathBuf>,
+    /// Test selection policy.
+    #[arg(long, value_enum, default_value_t = ModeArg::Balanced)]
+    mode: ModeArg,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -148,7 +202,15 @@ fn run(command: Command) -> Result<(), String> {
         Command::Analyze(args) => {
             let mut options = AnalyzeOptions::new(&args.repo, &args.base, &args.head);
             options.impact = ImpactOptions { max_depth: args.max_depth, ..ImpactOptions::default() };
-            options.db = args.db;
+            options.db = match args.db {
+                Some(db) => Some(db),
+                None => default_db(&args.repo).ok().filter(|db| db.is_file()),
+            };
+            options.mode = match args.mode {
+                ModeArg::Conservative => ripplepath_engine::SelectionMode::Conservative,
+                ModeArg::Balanced => ripplepath_engine::SelectionMode::Balanced,
+                ModeArg::FastFeedback => ripplepath_engine::SelectionMode::FastFeedback,
+            };
             let report = analyze(&options).map_err(|e| e.to_string())?;
             emit(&report, args.format, args.output.as_deref())
         }
@@ -209,6 +271,65 @@ fn run(command: Command) -> Result<(), String> {
             print!("{}", text::neutralize_terminal_controls(&rendered));
             Ok(())
         }
+        Command::Ingest(command) => {
+            let limits = ripplepath_engine::Limits::default();
+            let (outcome, kind) = match command {
+                IngestCommand::Coverage { file, format, target, test } => {
+                    let input = read_input(&file)?;
+                    let db = target.db.map_or_else(|| default_db(&target.repo), Ok)?;
+                    let format = match format {
+                        CoverageArg::Jacoco => ripplepath_engine::CoverageFormat::Jacoco,
+                        CoverageArg::Lcov => ripplepath_engine::CoverageFormat::Lcov,
+                    };
+                    let source = file.to_string_lossy();
+                    let outcome = ripplepath_engine::ingest_coverage(
+                        &target.repo,
+                        &target.rev,
+                        &db,
+                        ripplepath_engine::CoverageInput {
+                            format,
+                            text: &input,
+                            source: &source,
+                            test: test.as_deref(),
+                        },
+                        &limits,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    (outcome, "coverage")
+                }
+                IngestCommand::Junit { file, target } => {
+                    let input = read_input(&file)?;
+                    let db = target.db.map_or_else(|| default_db(&target.repo), Ok)?;
+                    let outcome = ripplepath_engine::ingest_junit(
+                        &target.repo,
+                        &target.rev,
+                        &db,
+                        &input,
+                        &file.to_string_lossy(),
+                        &limits,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    (outcome, "junit")
+                }
+            };
+            let mut text = format!(
+                "Ingested {kind} at {}: {} report(s), {} mapped, {} unmapped{}\n",
+                outcome.commit.chars().take(10).collect::<String>(),
+                outcome.reports,
+                outcome.mapped,
+                outcome.unmapped,
+                if kind == "coverage" {
+                    format!(", {} covered symbols", outcome.covered_symbols)
+                } else {
+                    String::new()
+                },
+            );
+            for example in &outcome.unmapped_examples {
+                text.push_str(&format!("  unmapped: {example}\n"));
+            }
+            print!("{}", text::neutralize_terminal_controls(&text));
+            Ok(())
+        }
         Command::Serve { repo, addr, web_dir, base, head, allowed_hosts } => {
             if !addr.ip().is_loopback() {
                 eprintln!("warning: listening on {addr}; anyone who can reach it can read analysed source metadata");
@@ -251,6 +372,19 @@ fn run(command: Command) -> Result<(), String> {
             Ok(())
         }
     }
+}
+
+/// Evidence files come from CI artifacts; bounded before parsing.
+fn read_input(path: &Path) -> Result<String, String> {
+    let size = std::fs::metadata(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?.len();
+    if size > ripplepath_evidence_limit() {
+        return Err(format!("{} is {size} bytes, above the input limit", path.display()));
+    }
+    std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))
+}
+
+fn ripplepath_evidence_limit() -> u64 {
+    ripplepath_engine::MAX_EVIDENCE_BYTES as u64
 }
 
 /// Default index location: the user's cache directory, keyed by the repository's canonical path.

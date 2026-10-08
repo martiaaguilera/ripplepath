@@ -270,14 +270,22 @@ fn resolution_is_deterministic_regardless_of_file_order() {
 
 #[test]
 fn large_classes_resolve_in_linear_time() {
-    const SIZE: usize = 20_000;
-    // 20k methods, each calling the next: a member lookup that scans every method per call is
-    // 400M comparisons; a hash lookup is 20k.
-    let methods: String = (0..20_000).map(|i| format!("  void m{i}() {{ m{}(); }}\n", i + 1)).collect();
-    let src = format!("package p;\nclass Big {{\n{methods}  void m20000() {{}}\n}}\n");
-    let started = std::time::Instant::now();
-    let file = java::extract("p/Big.java", &src, Duration::from_secs(60)).unwrap();
-    let g = java::resolve(&[&file]);
-    assert!(g.edges.iter().filter(|e| e.kind == EdgeKind::Calls).count() >= SIZE);
-    assert!(started.elapsed() < Duration::from_secs(20), "took {:?}", started.elapsed());
+    // Methods each calling the next. Absolute timings vary with machine load, so the test checks
+    // growth instead: 4x the input must cost well under the 16x a quadratic member scan would.
+    fn time(size: usize) -> Duration {
+        let methods: String = (0..size).map(|i| format!("  void m{i}() {{ m{}(); }}\n", i + 1)).collect();
+        let src = format!("package p;\nclass Big {{\n{methods}  void m{size}() {{}}\n}}\n");
+        let started = std::time::Instant::now();
+        let file = java::extract("p/Big.java", &src, Duration::from_secs(120)).unwrap();
+        let g = java::resolve(&[&file]);
+        assert!(g.edges.iter().filter(|e| e.kind == EdgeKind::Calls).count() >= size);
+        started.elapsed()
+    }
+    // Minimum of three runs each: other tests in this binary run in parallel and inflate any one
+    // measurement.
+    let best = |size| (0..3).map(|_| time(size)).min().unwrap_or_default();
+    let small = best(4_000);
+    let large = best(16_000);
+    let ratio = large.as_secs_f64() / small.as_secs_f64().max(1e-3);
+    assert!(ratio < 9.0, "4x input took {ratio:.1}x time ({small:?} -> {large:?})");
 }

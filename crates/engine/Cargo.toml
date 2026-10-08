@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 ripplepath-core.workspace = true
+ripplepath-evidence.workspace = true
 ripplepath-git.workspace = true
 ripplepath-graph.workspace = true
 ripplepath-lang.workspace = true

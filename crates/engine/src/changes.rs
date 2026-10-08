@@ -181,6 +181,7 @@ fn changed(symbol: &Symbol, change: ChangeKind) -> ChangedSymbol {
         span: symbol.span,
         visibility: symbol.visibility,
         is_test: symbol.is_test,
+        coverage: None,
     }
 }
 

@@ -7,7 +7,7 @@
 //! Anything outside that subset is classified as either *external* (a library type — no edge
 //! needed) or *unresolved* (surfaced as uncertainty), never guessed.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use ripplepath_core::{EdgeKind, Evidence, Span, Symbol, SymbolId, SymbolKind, Visibility};
 
@@ -36,6 +36,11 @@ struct TypeEntry<'a> {
     file: &'a JavaFile,
     decl: &'a TypeDecl,
     outer: Option<String>,
+    /// Member lookups by name. Every call site does one; scanning the member list instead made
+    /// large classes quadratic (4x the methods cost 15x the time).
+    methods: HashMap<&'a str, Vec<&'a MethodDecl>>,
+    constructors: Vec<&'a MethodDecl>,
+    fields: HashMap<&'a str, &'a FieldDecl>,
 }
 
 struct Index<'a> {
@@ -130,7 +135,20 @@ impl<'a> Index<'a> {
                 SymbolId::new(format!("java:{fqn}"))
             };
             let outer = decl.name.rsplit_once('.').map(|(outer, _)| fqn_of(file, outer));
-            types.insert(fqn, TypeEntry { id, file, decl, outer });
+            let mut methods: HashMap<&str, Vec<&MethodDecl>> = HashMap::new();
+            let mut constructors = Vec::new();
+            for method in &decl.methods {
+                if method.is_constructor {
+                    constructors.push(method);
+                } else {
+                    methods.entry(method.name.as_str()).or_default().push(method);
+                }
+            }
+            let mut fields = HashMap::new();
+            for field in &decl.fields {
+                fields.entry(field.name.as_str()).or_insert(field);
+            }
+            types.insert(fqn, TypeEntry { id, file, decl, outer, methods, constructors, fields });
         }
         Self { types, simple_names }
     }
@@ -263,7 +281,7 @@ impl<'a> Index<'a> {
 
     /// Breadth-first over the in-repo hierarchy; members found on the nearest level win, which
     /// approximates Java's "most specific declaration" without full overload resolution.
-    fn find_member<T>(&self, fqn: &str, mut select: impl FnMut(&'a TypeDecl) -> Vec<T>) -> Lookup<(String, T)> {
+    fn find_member<T>(&self, fqn: &str, mut select: impl FnMut(&TypeEntry<'a>) -> Vec<T>) -> Lookup<(String, T)> {
         let mut queue = VecDeque::from([fqn.to_owned()]);
         let mut seen = BTreeSet::new();
         let mut external_ancestor = false;
@@ -274,7 +292,7 @@ impl<'a> Index<'a> {
             let Some(entry) = self.types.get(&current) else {
                 continue;
             };
-            let found = select(entry.decl);
+            let found = select(entry);
             if !found.is_empty() {
                 return Lookup::Found(found.into_iter().map(|m| (current.clone(), m)).collect());
             }
@@ -289,8 +307,11 @@ impl<'a> Index<'a> {
     }
 
     fn find_methods(&self, fqn: &str, name: &str, arity: Option<u32>) -> Lookup<(String, &'a MethodDecl)> {
-        let lookup = self.find_member(fqn, |decl| {
-            decl.methods.iter().filter(|m| !m.is_constructor && m.name == name && arity_matches(m, arity)).collect()
+        let lookup = self.find_member(fqn, |entry| {
+            entry
+                .methods
+                .get(name)
+                .map_or_else(Vec::new, |ms| ms.iter().copied().filter(|m| arity_matches(m, arity)).collect())
         });
         match lookup {
             Lookup::NotFound if OBJECT_METHODS.contains(&name) => Lookup::External,
@@ -299,7 +320,7 @@ impl<'a> Index<'a> {
     }
 
     fn find_field(&self, fqn: &str, name: &str) -> Lookup<(String, &'a FieldDecl)> {
-        self.find_member(fqn, |decl| decl.fields.iter().filter(|f| f.name == name).take(1).collect())
+        self.find_member(fqn, |entry| entry.fields.get(name).map_or_else(Vec::new, |f| vec![*f]))
     }
 
     fn type_id(&self, fqn: &str) -> Option<&SymbolId> {
@@ -500,7 +521,7 @@ impl<'a> Index<'a> {
 
     fn constructors(&self, fqn: &str, arity: u32) -> Option<(Vec<SymbolId>, Evidence)> {
         let entry = self.types.get(fqn)?;
-        let ctors: Vec<&MethodDecl> = entry.decl.methods.iter().filter(|m| m.is_constructor).collect();
+        let ctors = &entry.constructors;
         if ctors.is_empty() {
             // Implicit default constructor: the type itself is the target.
             return Some((vec![entry.id.clone()], Evidence::ResolvedExact));
@@ -691,9 +712,7 @@ impl<'a> Index<'a> {
             let Some(entry) = self.types.get(&ancestor) else {
                 continue;
             };
-            for candidate in
-                entry.decl.methods.iter().filter(|m| !m.is_constructor && !m.is_static && m.name == method.name)
-            {
+            for candidate in entry.methods.get(method.name.as_str()).into_iter().flatten().filter(|m| !m.is_static) {
                 let candidate_erased: Vec<&str> =
                     candidate.params.iter().map(|p| last_segment(&p.signature_text)).collect();
                 if candidate_erased != erased {

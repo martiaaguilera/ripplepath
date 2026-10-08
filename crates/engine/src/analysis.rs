@@ -8,7 +8,9 @@ use ripplepath_graph::{CodeGraph, ImpactOptions, impact};
 
 use crate::changes::{PathChange, TextStore, classify_symbols, diff_paths, hunks_for};
 use crate::report::*;
+use crate::selection::{SelectionInput, select};
 use crate::snapshot::{FactCache, IndexStatus, Snapshot, build_snapshot};
+use crate::test_evidence::LoadedEvidence;
 use crate::{Limits, TOOL_VERSION};
 
 #[derive(Debug, thiserror::Error)]
@@ -21,6 +23,10 @@ pub enum AnalysisError {
     Storage(#[from] ripplepath_storage::StorageError),
     #[error("internal error: the fact cache lost its store")]
     NoStore,
+    #[error(transparent)]
+    Evidence(#[from] ripplepath_evidence::EvidenceError),
+    #[error("no test matches '{0}'; pass a symbol id, a test file path or a Java test class name")]
+    UnknownTest(String),
 }
 
 #[derive(Clone, Debug)]
@@ -34,8 +40,10 @@ pub struct AnalyzeOptions {
     pub graph_node_cap: usize,
     /// Maximum individually listed unresolved references; the rest are summarised.
     pub unresolved_cap: usize,
-    /// Persistent fact cache. Files unchanged since a previous run are not parsed again.
+    /// Persistent fact cache and test evidence (coverage, CI history). Without it the analysis uses
+    /// static evidence only.
     pub db: Option<PathBuf>,
+    pub mode: SelectionMode,
 }
 
 impl AnalyzeOptions {
@@ -49,6 +57,7 @@ impl AnalyzeOptions {
             graph_node_cap: 400,
             unresolved_cap: 200,
             db: None,
+            mode: SelectionMode::Balanced,
         }
     }
 }
@@ -64,8 +73,23 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
         None => FactCache::default(),
     };
     let base = build_snapshot(&repo, base_rev, &mut cache, &options.limits)?;
-    let head = build_snapshot(&repo, head_rev, &mut cache, &options.limits)?;
+    let mut head = build_snapshot(&repo, head_rev, &mut cache, &options.limits)?;
     let indexed_at = started.elapsed();
+
+    let mut evidence = match cache.store_mut() {
+        Some(store) => LoadedEvidence::load(store)?,
+        None => LoadedEvidence::default(),
+    };
+    evidence.mark_other_commits(base.revision.commit.as_deref(), head.revision.commit.as_deref());
+    // Measured coverage joins the head graph as TESTS edges before impact traversal, so a covered
+    // test is reached from the change like any other dependent — with its evidence class visible.
+    let coverage_edges = evidence.coverage_edges(&head.graph);
+    if !coverage_edges.is_empty() {
+        evidence.summary.coverage_edges = coverage_edges.len();
+        let mut edges = head.graph.edges().to_vec();
+        edges.extend(coverage_edges);
+        head.graph = CodeGraph::new(head.graph.symbols().cloned().collect(), edges);
+    }
 
     let mut texts = TextStore::new(&repo, options.limits.max_file_bytes);
     let (path_changes, rename_skipped) = diff_paths(&base, &head, &mut texts)?;
@@ -86,11 +110,19 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
                 .file(&change.path)
                 .or_else(|| change.base_path().and_then(|p| base.file(p)))
                 .and_then(|f| f.language),
+            category: crate::signals::classify(&change.path),
             hunks: hunks_for(change, &base, &head, &texts),
         })
         .collect();
 
-    let changed_symbols = classify_symbols(&base, &head, &path_changes);
+    let mut changed_symbols = classify_symbols(&base, &head, &path_changes);
+    for changed in &mut changed_symbols {
+        changed.coverage = head
+            .graph
+            .symbol(&changed.id)
+            .or_else(|| base.graph.symbol(&changed.id))
+            .and_then(|s| evidence.coverage_status(s));
+    }
 
     let mut head_roots = Vec::new();
     let mut base_roots = Vec::new();
@@ -137,6 +169,7 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
                 weakest_evidence: item.weakest_evidence,
                 graph: side,
                 path: item.path.clone(),
+                coverage: evidence.coverage_status(symbol),
             };
             match impacted.get(&item.id) {
                 Some(existing) if existing.depth <= candidate.depth => {}
@@ -149,11 +182,13 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
     let mut impacted_symbols: Vec<ImpactedSymbolReport> = impacted.into_values().collect();
     impacted_symbols.sort_by(|a, b| (a.depth, &a.id).cmp(&(b.depth, &b.id)));
 
-    let tests = recommend_tests(&head.graph, &changed_symbols, &impacted_symbols);
+    let mut tests = recommend_tests(&head.graph, &changed_symbols, &impacted_symbols);
+    for test in &mut tests {
+        test.history = evidence.history(&test.id);
+    }
     let test_units: Vec<&ripplepath_core::Symbol> =
         head.graph.symbols().filter(|s| s.is_test && s.kind.is_test_unit()).collect();
     let tests_total = test_units.len();
-    let tests_selected = selected_test_units(&head.graph, &test_units, &tests);
 
     let truncated = head_impact.truncated || base_impact.truncated;
     let uncertainty = collect_uncertainty(
@@ -168,6 +203,22 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
     );
 
     let graph = graph_slice(&head, &base, &changed_symbols, &impacted_symbols, options.graph_node_cap);
+
+    let unit_duration = |id: &SymbolId| evidence.history(id).and_then(|h| h.median_duration_ms);
+    let all_units: Vec<(SymbolId, Option<u64>)> =
+        test_units.iter().map(|u| (u.id.clone(), unit_duration(&u.id))).collect();
+    let units_of = |id: &SymbolId| -> Vec<(SymbolId, Option<u64>)> {
+        all_units.iter().filter(|(unit, _)| is_within(&head.graph, unit, id)).cloned().collect()
+    };
+    let reasons = fallback_reasons(&files, &uncertainty, &changed_symbols, &tests, &evidence);
+    let test_selection = select(SelectionInput {
+        mode: options.mode,
+        tests: &tests,
+        reasons,
+        all_units: all_units.clone(),
+        units_of: &units_of,
+    });
+    let tests_selected = test_selection.selected_units;
 
     let modules: BTreeSet<&str> = changed_symbols
         .iter()
@@ -210,8 +261,105 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
         impacted_symbols,
         tests,
         uncertainty,
+        test_selection,
+        evidence: evidence.summary,
         graph,
     })
+}
+
+/// True when `unit` is `container` or lies inside it.
+fn is_within(graph: &CodeGraph, unit: &SymbolId, container: &SymbolId) -> bool {
+    let mut current = Some(unit);
+    while let Some(id) = current {
+        if id == container {
+            return true;
+        }
+        current = graph.symbol(id).and_then(|s| s.parent.as_ref());
+    }
+    false
+}
+
+/// Conditions under which static and measured evidence cannot be trusted to bound the tests that
+/// matter (docs/SPEC.md, test selection). Each widens the selection according to the mode.
+fn fallback_reasons(
+    files: &[FileChange],
+    uncertainty: &[Uncertainty],
+    changed: &[ChangedSymbol],
+    tests: &[TestRecommendation],
+    evidence: &LoadedEvidence,
+) -> Vec<FallbackReason> {
+    let mut reasons = Vec::new();
+    let mut add =
+        |severity, code: &str, detail: String| reasons.push(FallbackReason { severity, code: code.to_owned(), detail });
+    for file in files {
+        let Some(category) = file.category else { continue };
+        let (severity, code) = match category {
+            FileCategory::Migration => (Severity::High, "MIGRATION_CHANGED"),
+            FileCategory::Lockfile => (Severity::High, "LOCKFILE_CHANGED"),
+            FileCategory::Build => (Severity::High, "BUILD_FILE_CHANGED"),
+            FileCategory::Ci => (Severity::Medium, "CI_CHANGED"),
+            FileCategory::Container => (Severity::Medium, "CONTAINER_CHANGED"),
+            FileCategory::Config => (Severity::Medium, "CONFIG_CHANGED"),
+        };
+        add(severity, code, format!("{} changed; its effects are not traced through code", file.path));
+    }
+    for item in uncertainty {
+        let code = match item.kind {
+            UncertaintyKind::SyntaxError | UncertaintyKind::ParseFailure | UncertaintyKind::FileTooLarge
+                if item.severity == Severity::High =>
+            {
+                "CHANGED_FILE_NOT_UNDERSTOOD"
+            }
+            UncertaintyKind::ImpactTruncated => "IMPACT_TRUNCATED",
+            UncertaintyKind::UnresolvedReference => "UNRESOLVED_REFERENCE",
+            UncertaintyKind::UnsupportedLanguage => "UNSUPPORTED_FILE_CHANGED",
+            _ => continue,
+        };
+        let severity = if code == "UNSUPPORTED_FILE_CHANGED" { Severity::Low } else { item.severity };
+        if severity == Severity::Low {
+            continue;
+        }
+        add(severity, code, item.detail.clone());
+    }
+    let changed_code: Vec<&ChangedSymbol> = changed
+        .iter()
+        .filter(|s| !s.is_test && s.change != ChangeKind::Deleted && s.kind != SymbolKind::File)
+        .collect();
+    if !changed_code.is_empty() && tests.is_empty() {
+        add(Severity::High, "NO_TEST_EVIDENCE", "no test has evidence of exercising the changed code".to_owned());
+    }
+    if evidence.has_coverage() {
+        let uncovered: Vec<&str> = changed_code
+            .iter()
+            .filter(|s| {
+                s.change == ChangeKind::Modified
+                    && matches!(s.coverage, Some(CoverageStatus::NotCovered | CoverageStatus::NoData))
+            })
+            .map(|s| s.name.as_str())
+            .collect();
+        if !uncovered.is_empty() {
+            add(
+                Severity::Medium,
+                "CHANGED_CODE_WITHOUT_COVERAGE",
+                format!(
+                    "{} modified symbol(s) with no measured test execution: {}",
+                    uncovered.len(),
+                    uncovered.join(", ")
+                ),
+            );
+        }
+        if evidence.summary.coverage_reports_other_commits > 0 {
+            add(
+                Severity::Medium,
+                "STALE_COVERAGE",
+                format!(
+                    "{} coverage report(s) were measured at other commits; code may have moved since",
+                    evidence.summary.coverage_reports_other_commits
+                ),
+            );
+        }
+    }
+    reasons
 }
 
 fn revision_info(snapshot: &Snapshot) -> RevisionInfo {
@@ -222,23 +370,21 @@ fn revision_info(snapshot: &Snapshot) -> RevisionInfo {
     }
 }
 
-/// Number of test units that the recommendations select: listed units plus every unit inside a
-/// listed container.
-fn selected_test_units(head: &CodeGraph, units: &[&ripplepath_core::Symbol], tests: &[TestRecommendation]) -> usize {
-    let listed: BTreeSet<&SymbolId> = tests.iter().map(|t| &t.id).collect();
-    units
+fn is_coverage_hop(hop: &ripplepath_graph::Hop) -> bool {
+    hop.edge.kind == EdgeKind::Tests && hop.edge.evidence == ripplepath_core::Evidence::CoverageObserved
+}
+
+fn tier(reason: TestReason, path: &[ripplepath_graph::Hop]) -> EvidenceTier {
+    let static_hops_exact = path
         .iter()
-        .filter(|unit| {
-            let mut current = Some(&unit.id);
-            while let Some(id) = current {
-                if listed.contains(id) {
-                    return true;
-                }
-                current = head.symbol(id).and_then(|s| s.parent.as_ref());
-            }
-            false
-        })
-        .count()
+        .filter(|h| !is_coverage_hop(h))
+        .all(|h| h.edge.evidence == ripplepath_core::Evidence::ResolvedExact);
+    match (reason, path.iter().any(is_coverage_hop), static_hops_exact) {
+        (TestReason::ChangedTest, ..) => EvidenceTier::Strong,
+        (_, true, true) => EvidenceTier::Strong,
+        (_, true, false) | (_, false, true) => EvidenceTier::Medium,
+        (_, false, false) => EvidenceTier::Weak,
+    }
 }
 
 /// Test units (methods, test cases) are recommended when they changed or have a static path to a
@@ -272,6 +418,9 @@ fn recommend_tests(
             root: root.clone(),
             weakest_evidence: evidence,
             path: path.to_vec(),
+            tier: tier(reason, path),
+            coverage_observed: path.iter().any(is_coverage_hop),
+            history: None,
         })
     };
 
