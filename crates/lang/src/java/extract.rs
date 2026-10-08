@@ -15,7 +15,20 @@ const MAX_TYPE_NESTING: usize = 32;
 const MAX_RECEIVER_DEPTH: usize = 64;
 
 pub fn extract(path: &str, source: &str, budget: Duration) -> Result<JavaFile, ParseError> {
-    let tree = syntax::parse(&tree_sitter_java::LANGUAGE.into(), source, budget)?;
+    let language = tree_sitter_java::LANGUAGE.into();
+    let mut tree = syntax::parse(&language, source, budget)?;
+    // tree-sitter-java 0.23.5 only accepts a simple name at the head of a record pattern, so the
+    // valid `case Outer.Rec(var x) ->` is a syntax error. Re-parse with the dots of such heads
+    // replaced by `_`: same length, so every byte offset and line still matches `source`, which
+    // is where all text below is read from. Kept only if it removes errors.
+    if tree.root_node().has_error()
+        && let Some(patched) = flatten_qualified_record_patterns(source)
+    {
+        let retry = syntax::parse(&language, &patched, budget)?;
+        if syntax::syntax_error_lines(&retry).len() < syntax::syntax_error_lines(&tree).len() {
+            tree = retry;
+        }
+    }
     let root = tree.root_node();
 
     let mut package = None;
@@ -53,6 +66,56 @@ pub fn extract(path: &str, source: &str, budget: Duration) -> Result<JavaFile, P
 
 fn is_comment(kind: &str) -> bool {
     matches!(kind, "line_comment" | "block_comment")
+}
+
+/// `source` with every `case A.B.C(` / `instanceof A.B.C(` head rewritten to `case A_B_C(`, or
+/// `None` if there is none. Only `.` bytes change, so the length and UTF-8 validity are kept. A
+/// qualified name followed by `(` after these keywords can only be a record pattern, and text in
+/// comments or strings that happens to match is unaffected structurally.
+fn flatten_qualified_record_patterns(source: &str) -> Option<String> {
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80;
+    let bytes = source.as_bytes();
+    let mut patched = bytes.to_vec();
+    let mut changed = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        let keyword = [&b"case"[..], &b"instanceof"[..]].into_iter().find(|kw| {
+            bytes[i..].starts_with(kw)
+                && (i == 0 || !is_ident(bytes[i - 1]))
+                && bytes.get(i + kw.len()).is_some_and(|b| b.is_ascii_whitespace())
+        });
+        let Some(keyword) = keyword else {
+            i += 1;
+            continue;
+        };
+        let mut j = i + keyword.len();
+        while bytes.get(j).is_some_and(u8::is_ascii_whitespace) {
+            j += 1;
+        }
+        let start = j;
+        while bytes.get(j).is_some_and(|&b| is_ident(b) || b == b'.') {
+            j += 1;
+        }
+        let name = &bytes[start..j];
+        let mut k = j;
+        while bytes.get(k).is_some_and(u8::is_ascii_whitespace) {
+            k += 1;
+        }
+        let qualified = name.contains(&b'.')
+            && name.first().is_some_and(|&b| b != b'.')
+            && name.last().is_some_and(|&b| b != b'.')
+            && !name.windows(2).any(|w| w == b"..");
+        if qualified && bytes.get(k) == Some(&b'(') {
+            for b in &mut patched[start..j] {
+                if *b == b'.' {
+                    *b = b'_';
+                }
+            }
+            changed = true;
+        }
+        i = j.max(i + 1);
+    }
+    if changed { String::from_utf8(patched).ok() } else { None }
 }
 
 fn is_type_declaration(kind: &str) -> bool {
@@ -799,6 +862,45 @@ fn walk_body<'tree>(root: Node<'tree>, source: &str, refs: &mut Vec<BodyRef>, lo
                 if let Some(name) = node.child_by_field_name("name") {
                     let ty = node.child_by_field_name("right").and_then(|t| type_use(t, source));
                     locals.push(Local { name: text(name, source).to_owned(), ty, init: None });
+                }
+            }
+            "record_pattern" => {
+                // `case Rec(var a, Inner(var b))`: the head names the record (read from `source`,
+                // so a head flattened for parsing reads back with its dots).
+                let children = named_children(node);
+                if let Some(head) = children.first() {
+                    let record = match head.kind() {
+                        "generic_type" => erase(*head, source),
+                        _ => Some(compact(text(*head, source))),
+                    };
+                    if let Some(record) = record {
+                        refs.push(BodyRef::Type(TypeUse { name: record.clone(), line: line(*head), args: Vec::new() }));
+                        let components = children
+                            .iter()
+                            .filter(|n| n.kind() == "record_pattern_body")
+                            .flat_map(|b| named_children(*b))
+                            .filter(|n| matches!(n.kind(), "record_pattern_component" | "record_pattern"));
+                        for (index, component) in components.enumerate() {
+                            let parts = named_children(component);
+                            let (Some(ty), Some(name)) = (
+                                parts.first().filter(|_| component.kind() == "record_pattern_component"),
+                                parts.get(1).filter(|n| n.kind() == "identifier"),
+                            ) else {
+                                continue;
+                            };
+                            let is_var = ty.kind() == "type_identifier" && text(*ty, source) == "var";
+                            let init = is_var.then(|| LocalInit::RecordComponent {
+                                record: record.clone(),
+                                index: u32::try_from(index).unwrap_or(u32::MAX),
+                            });
+                            locals.push(Local {
+                                name: text(*name, source).to_owned(),
+                                ty: type_use(*ty, source),
+                                init,
+                            });
+                        }
+                    }
+                    skip_child = Some(head.id());
                 }
             }
             "type_pattern" => {

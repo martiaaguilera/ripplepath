@@ -157,6 +157,32 @@ fn many_same_named_locals_cannot_make_receiver_typing_exponential() {
 }
 
 #[test]
+fn qualified_record_patterns_parse_and_type_their_components() {
+    // tree-sitter-java 0.23.5 rejects a qualified record pattern head; the frontend re-parses with
+    // the dots flattened. Spans and names must still come from the original text.
+    let outcome = "package p;\npublic sealed interface Outcome {\n  record Done(Job job, int code) implements Outcome {}\n  record Lost(String why) implements Outcome {}\n}\n";
+    let user = "package p;\nclass User {\n  int run(Outcome o) {\n    if (o instanceof Outcome.Lost(var why)) { return 0; }\n    return switch (o) {\n      case Outcome.Done(var job, var code) when code > 0 -> { job.cancel(); yield code; }\n      case Outcome.Done(Job job, int code) -> code;\n      default -> 1;\n    };\n  }\n}\n";
+    let file = java::extract("p/User.java", user, BUDGET).unwrap();
+    assert_eq!(file.syntax_error_lines, Vec::<u32>::new());
+    let g = graph(&[("p/Outcome.java", outcome), ("p/User.java", user)]);
+    let from = "java:p.User#run(Outcome)";
+    let cancel = edge(&g, from, "java:p.Job#cancel()", EdgeKind::Calls).expect("component typed from the record");
+    assert_eq!((cancel.evidence, cancel.line), (Evidence::ResolvedExact, 6));
+    for record in ["java:p.Outcome.Done", "java:p.Outcome.Lost"] {
+        assert!(edge(&g, from, record, EdgeKind::References).is_some(), "{record}");
+    }
+    assert_eq!(unresolved(&g), Vec::<String>::new());
+}
+
+#[test]
+fn files_with_other_syntax_errors_are_still_flagged() {
+    let src =
+        "package p;\nclass Broken {\n  int f(Object o) { return o instanceof A.B(var x) ? 1 : 0; }\n  void g( {\n}\n";
+    let file = java::extract("p/Broken.java", src, BUDGET).unwrap();
+    assert!(file.syntax_error_lines.contains(&4), "{:?}", file.syntax_error_lines);
+}
+
+#[test]
 fn adding_a_method_to_a_record_does_not_modify_its_components() {
     let before = "package p;\npublic record Settings(int retries, String name) {\n}\n";
     let after = "package p;\npublic record Settings(int retries, String name) {\n  public int twice() { return retries * 2; }\n}\n";

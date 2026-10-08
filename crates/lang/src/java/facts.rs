@@ -124,6 +124,9 @@ pub enum LocalInit {
     /// Parameter `index` of a lambda passed to `<receiver>.<method>(...)`, e.g. `j` in
     /// `jobs.forEach(j -> ...)`: typed from the container `receiver` resolves to.
     LambdaParam { receiver: Receiver, method: String, index: u32 },
+    /// Component `index` of a record pattern `case Rec(var a, var b)`: typed as the record's
+    /// component. `record` is the type name as written in the pattern.
+    RecordComponent { record: String, index: u32 },
 }
 
 /// The expression a member is accessed on, reduced to what static resolution can use.

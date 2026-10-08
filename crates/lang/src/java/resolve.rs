@@ -594,6 +594,21 @@ impl<'a> Index<'a> {
             (None, Some(LocalInit::ElementOf(iterable))) => {
                 iteration_element(self.receiver_type(scope, iterable, depth + 1))
             }
+            (None, Some(LocalInit::RecordComponent { record, index })) => match self.resolve_in_scope(scope, record) {
+                TypeRes::Internal { fqn, evidence } => {
+                    let component = self
+                        .types
+                        .get(&fqn)
+                        .filter(|e| e.decl.kind == SymbolKind::Record)
+                        .and_then(|entry| entry.decl.fields.iter().filter(|f| !f.is_static).nth(*index as usize));
+                    match component {
+                        Some(field) => weaken(self.recv_declared(&fqn, &field.ty), evidence),
+                        None => RecvType::Unknown,
+                    }
+                }
+                TypeRes::External => RecvType::External,
+                TypeRes::Unresolved => RecvType::Unknown,
+            },
             (None, Some(LocalInit::LambdaParam { receiver, method, index })) => {
                 lambda_param(self.receiver_type(scope, receiver, depth + 1), method, *index)
             }
