@@ -23,7 +23,7 @@ Status: Java and TypeScript/JavaScript frontends. Planned components are marked 
 | `evidence` | Bounded parsers for JaCoCo XML, LCOV and JUnit XML (no entity expansion). Test evidence semantics: docs/TEST_INTELLIGENCE.md. | none |
 | `storage` | SQLite: migrations, persistent fact cache, indexed graph updated by difference. | one DB file |
 | `engine` | Orchestration: snapshots, fact cache, change classification, hunks, uncertainty, report. Pure modules `config`, `architecture`, `owners`, `api_surface`, `risk`, `policy`; `assess` reads `ripplepath.yml` (base) and CODEOWNERS (head) through `git` and calls them. | via `git` |
-| `cli` | `ripplepath analyze | index | ingest | architecture check | serve | demo`. Text renderer neutralises terminal control characters. Exit 2 on policy failure with `--fail-on-policy`. | stdout/files |
+| `cli` | `ripplepath analyze | index | ingest | architecture check | serve | demo`. Text renderer neutralises terminal control characters. Markdown, SARIF and workflow-command renderers (`markdown.rs`, `sarif.rs`, `annotations.rs`) share located findings (`findings.rs`). Exit 2 on policy failure with `--fail-on-policy`. | stdout/files |
 | `server` | Axum API `/api/v1/*` + static UI, Host validation, CSP, bounded analysis concurrency. | HTTP |
 | `web/` | React + TypeScript strict UI. Renders the report; never infers relationships. | HTTP |
 

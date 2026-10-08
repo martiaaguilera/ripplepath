@@ -112,7 +112,7 @@ version ⇒ byte-identical JSON. `analysis.json` carries `schema_version`.
   revision. `analyze --db` with a warm cache produces byte-identical output to a cold run.
 
 ## 9. Planned sections
-GitHub Action, replay evaluation. Each will be specified here as it is implemented.
+Replay evaluation. Each will be specified here as it is implemented.
 
 ## 10. Configuration [implemented]
 `ripplepath.yml` at the repository root; full schema in docs/ARCHITECTURE_RULES.md. Strict parsing
@@ -149,3 +149,18 @@ instead. The risk score is never a gate. CLI exit codes: 0 success, 1 error, 2 p
 `analyze --fail-on-policy`.
 
 The report additions in §10–§14 are additive fields; `schema_version` stays 1.
+
+## 15. CI outputs and GitHub Action [implemented]
+`analyze --format text|json|markdown|sarif|github-annotations`; `--output-dir D` additionally writes
+`analysis.json`, `summary.md`, `ripplepath.sarif`, `annotations.txt`; `--path-prefix P` prefixes file
+paths in SARIF and annotations. All are pure renderings of the report and byte-identical for the
+same report.
+- Located findings (SARIF, annotations): `NEW` architecture violations, breaking API changes,
+  high-severity parse failures of changed files, configuration errors (file-level, line 1 in
+  SARIF). Level from the corresponding policy gate (`FAIL` → error, `WARN` → warning, else note).
+  Rule ids `ripplepath/<gate-like-name>`; `partialFingerprints["ripplepath/findingHash/v1"]` is
+  line-independent.
+- Markdown: at most 60 000 bytes; repository text only inside code spans or punctuation-escaped.
+- The composite action (`action.yml`) runs `analyze --fail-on-policy`, publishes summary,
+  annotations, artifact, optional SARIF and one PR comment (marker `<!-- ripplepath -->`), then
+  exits 2 on policy `FAIL`. Details: docs/GITHUB_INTEGRATION.md.
