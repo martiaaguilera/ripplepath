@@ -31,7 +31,7 @@ Status: controls listed here are implemented and tested unless marked *planned*.
 | Oversized or malformed MCP messages | Lines above 1 MiB are discarded without buffering; batches, bad ids and invalid JSON get JSON-RPC errors; requests are processed sequentially; results above 512 KiB are refused. | `oversized_lines_are_dropped_and_the_stream_resyncs`, `protocol_errors_use_json_rpc_codes` |
 | Request floods | At most 2 concurrent analyses; permit held inside the blocking task so client disconnects cannot release it early. | design |
 | Malformed revision input | 1–256 chars, no control characters; passed to gix rev-parse, never a shell. | API test |
-| Malicious XML (coverage/JUnit) | *Planned* with ingestion: no DTD/entity expansion, size caps. | — |
+| Malicious XML (coverage/JUnit) | Any entity declaration is refused (no DTD/entity expansion, no external entities); only predefined entities and character references are decoded; 64 MiB per input, at most 5,000,000 elements and depth 128. | `refuses_entity_declarations_and_malformed_input` (`crates/evidence`) |
 | Forged index shipped inside an analysed repository | The default index lives in the user cache directory (keyed by canonical repo path), never in the working tree; the index is trusted local state. | `default_db` |
 | Escape sequences in stored values reaching the terminal | Stored values in errors are escaped and truncated; all CLI error output is neutralised. | `corrupt`, CLI `main` |
 | Source leakage via logs | Logs contain revision specs, counts and timings; never file contents. | review |
