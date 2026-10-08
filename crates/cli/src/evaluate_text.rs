@@ -3,7 +3,7 @@
 use std::fmt::Write;
 
 use ripplepath_engine::SelectionMode;
-use ripplepath_engine::evaluation::{EvaluationReport, ModeResult};
+use ripplepath_engine::evaluation::{EvaluationReport, ModeAggregate, ModeResult};
 
 fn mode_name(mode: SelectionMode) -> &'static str {
     match mode {
@@ -27,8 +27,24 @@ fn cell(result: &ModeResult) -> String {
         let _ = write!(text, " caught {}/{}", s.caught_failures, s.failed_tests);
         if let Some(position) = s.first_failure_position {
             let _ = write!(text, " first@{position}");
+            if let Some(ms) = s.time_to_first_failure_ms {
+                let _ = write!(text, " after {ms} ms");
+            }
         }
     }
+    text
+}
+
+/// Mean position of the first failing test, and its mean cumulative recorded time when known.
+fn first_failure(m: &ModeAggregate) -> String {
+    let Some(position) = m.mean_first_failure_position else {
+        return "n/a".to_owned();
+    };
+    let mut text = format!("#{position:.1}");
+    if let Some(ms) = m.mean_time_to_first_failure_ms {
+        let _ = write!(text, ", {ms:.1} ms");
+    }
+    let _ = write!(text, " ({} cases)", m.first_failure_cases);
     text
 }
 
@@ -46,19 +62,20 @@ pub fn render(report: &EvaluationReport) -> String {
     out.push('\n');
     let _ = writeln!(
         out,
-        "{:<14} {:>14} {:>7} {:>11} {:>17} {:>17}",
-        "mode", "recall", "missed", "full suite", "mean tests saved", "mean time saved"
+        "{:<14} {:>14} {:>7} {:>11} {:>17} {:>22} {:>26}",
+        "mode", "recall", "missed", "full suite", "mean tests saved", "mean time saved", "mean first failure"
     );
     for m in &report.modes {
         let _ = writeln!(
             out,
-            "{:<14} {:>14} {:>7} {:>11} {:>17} {:>17}",
+            "{:<14} {:>14} {:>7} {:>11} {:>17} {:>22} {:>26}",
             mode_name(m.mode),
             format!("{}/{} {}", m.caught_failures, m.failed_tests, ratio(m.failing_test_recall)),
             m.missed_failures,
             format!("{}/{}", m.full_suite_fallbacks, m.cases),
             ratio(m.mean_selected_test_reduction),
             format!("{} ({} cases)", ratio(m.mean_runtime_reduction), m.runtime_cases),
+            first_failure(m),
         );
     }
     out.push_str("\nPer case (selected/total tests; caught/failed; position of first failing test):\n");

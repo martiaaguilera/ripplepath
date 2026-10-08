@@ -1,42 +1,42 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="JUnit Jupiter" tests="20" skipped="0" failures="0" errors="4" time="0.658" hostname="redacted" timestamp="2026-10-08T16:29:59">
-<testcase name="percentRoundsHalfUp()" classname="com.acme.shop.domain.MoneyTest" time="0.001">
+<testsuite name="JUnit Jupiter" tests="20" skipped="0" failures="0" errors="4" time="0.233" hostname="redacted" timestamp="2026-10-08T19:04:50">
+<testcase name="percentRoundsHalfUp()" classname="com.acme.shop.domain.MoneyTest" time="0.002">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:percentRoundsHalfUp()]
 display-name: JUnit Jupiter > MoneyTest > percentRoundsHalfUp()
 ]]></system-out>
 </testcase>
-<testcase name="unknownCountryIsRefused()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0.006">
+<testcase name="unknownCountryIsRefused()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0.002">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.TaxCalculatorTest]/[method:unknownCountryIsRefused()]
 display-name: JUnit Jupiter > TaxCalculatorTest > unknownCountryIsRefused()
 ]]></system-out>
 </testcase>
-<testcase name="totalsDiscountTaxAndShipping()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.012">
+<testcase name="totalsDiscountTaxAndShipping()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.005">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.application.CheckoutServiceTest]/[method:totalsDiscountTaxAndShipping()]
 display-name: JUnit Jupiter > CheckoutServiceTest > totalsDiscountTaxAndShipping()
 ]]></system-out>
 </testcase>
-<testcase name="subtotalSumsLineItems()" classname="com.acme.shop.domain.OrderTest" time="0.01">
+<testcase name="subtotalSumsLineItems()" classname="com.acme.shop.domain.OrderTest" time="0.002">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.OrderTest]/[method:subtotalSumsLineItems()]
 display-name: JUnit Jupiter > OrderTest > subtotalSumsLineItems()
 ]]></system-out>
 </testcase>
-<testcase name="rejectsPercentAbove100()" classname="com.acme.shop.pricing.PercentageDiscountTest" time="0.004">
+<testcase name="rejectsPercentAbove100()" classname="com.acme.shop.pricing.PercentageDiscountTest" time="0.002">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.PercentageDiscountTest]/[method:rejectsPercentAbove100()]
 display-name: JUnit Jupiter > PercentageDiscountTest > rejectsPercentAbove100()
 ]]></system-out>
 </testcase>
-<testcase name="formatsAsEuros()" classname="com.acme.shop.domain.MoneyTest" time="0.227">
+<testcase name="formatsAsEuros()" classname="com.acme.shop.domain.MoneyTest" time="0.06">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:formatsAsEuros()]
 display-name: JUnit Jupiter > MoneyTest > formatsAsEuros()
 ]]></system-out>
 </testcase>
-<testcase name="reservesStockForEveryItem()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.064">
+<testcase name="reservesStockForEveryItem()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.026">
 <error message="cannot reserve 5 x book: only 5 available" type="com.acme.shop.inventory.OutOfStockException"><![CDATA[com.acme.shop.inventory.OutOfStockException: cannot reserve 5 x book: only 5 available
 	at com.acme.shop.inventory.Inventory.requireAvailable(Inventory.java:26)
 	at com.acme.shop.inventory.Inventory.reserve(Inventory.java:18)
@@ -48,13 +48,13 @@ unique-id: [engine:junit-jupiter]/[class:com.acme.shop.application.CheckoutServi
 display-name: JUnit Jupiter > CheckoutServiceTest > reservesStockForEveryItem()
 ]]></system-out>
 </testcase>
-<testcase name="refusesMoreThanAvailable()" classname="com.acme.shop.inventory.InventoryTest" time="0.002">
+<testcase name="refusesMoreThanAvailable()" classname="com.acme.shop.inventory.InventoryTest" time="0.001">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.inventory.InventoryTest]/[method:refusesMoreThanAvailable()]
 display-name: JUnit Jupiter > InventoryTest > refusesMoreThanAvailable()
 ]]></system-out>
 </testcase>
-<testcase name="allowsReservingExactlyAllStock()" classname="com.acme.shop.inventory.InventoryTest" time="0.006">
+<testcase name="allowsReservingExactlyAllStock()" classname="com.acme.shop.inventory.InventoryTest" time="0.002">
 <error message="cannot reserve 3 x book: only 3 available" type="com.acme.shop.inventory.OutOfStockException"><![CDATA[com.acme.shop.inventory.OutOfStockException: cannot reserve 3 x book: only 3 available
 	at com.acme.shop.inventory.Inventory.requireAvailable(Inventory.java:26)
 	at com.acme.shop.inventory.Inventory.reserve(Inventory.java:18)
@@ -65,55 +65,55 @@ unique-id: [engine:junit-jupiter]/[class:com.acme.shop.inventory.InventoryTest]/
 display-name: JUnit Jupiter > InventoryTest > allowsReservingExactlyAllStock()
 ]]></system-out>
 </testcase>
-<testcase name="addsAndSubtracts()" classname="com.acme.shop.domain.MoneyTest" time="0.024">
+<testcase name="addsAndSubtracts()" classname="com.acme.shop.domain.MoneyTest" time="0.013">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:addsAndSubtracts()]
 display-name: JUnit Jupiter > MoneyTest > addsAndSubtracts()
 ]]></system-out>
 </testcase>
-<testcase name="reservesAvailableStock()" classname="com.acme.shop.inventory.InventoryTest" time="0.004">
+<testcase name="reservesAvailableStock()" classname="com.acme.shop.inventory.InventoryTest" time="0.001">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.inventory.InventoryTest]/[method:reservesAvailableStock()]
 display-name: JUnit Jupiter > InventoryTest > reservesAvailableStock()
 ]]></system-out>
 </testcase>
-<testcase name="noDiscountBelowTenItems()" classname="com.acme.shop.pricing.BulkDiscountTest" time="0.012">
+<testcase name="noDiscountBelowTenItems()" classname="com.acme.shop.pricing.BulkDiscountTest" time="0.001">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.BulkDiscountTest]/[method:noDiscountBelowTenItems()]
 display-name: JUnit Jupiter > BulkDiscountTest > noDiscountBelowTenItems()
 ]]></system-out>
 </testcase>
-<testcase name="minusNeverGoesBelowZero()" classname="com.acme.shop.domain.MoneyTest" time="0.005">
+<testcase name="minusNeverGoesBelowZero()" classname="com.acme.shop.domain.MoneyTest" time="0.001">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:minusNeverGoesBelowZero()]
 display-name: JUnit Jupiter > MoneyTest > minusNeverGoesBelowZero()
 ]]></system-out>
 </testcase>
-<testcase name="loadsRatesFromResource()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0.006">
+<testcase name="loadsRatesFromResource()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0.003">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.TaxCalculatorTest]/[method:loadsRatesFromResource()]
 display-name: JUnit Jupiter > TaxCalculatorTest > loadsRatesFromResource()
 ]]></system-out>
 </testcase>
-<testcase name="rejectsNonPositiveQuantity()" classname="com.acme.shop.domain.OrderTest" time="0.026">
+<testcase name="rejectsNonPositiveQuantity()" classname="com.acme.shop.domain.OrderTest" time="0.003">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.OrderTest]/[method:rejectsNonPositiveQuantity()]
 display-name: JUnit Jupiter > OrderTest > rejectsNonPositiveQuantity()
 ]]></system-out>
 </testcase>
-<testcase name="appliesFromTenItems()" classname="com.acme.shop.pricing.BulkDiscountTest" time="0.013">
+<testcase name="appliesFromTenItems()" classname="com.acme.shop.pricing.BulkDiscountTest" time="0.004">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.BulkDiscountTest]/[method:appliesFromTenItems()]
 display-name: JUnit Jupiter > BulkDiscountTest > appliesFromTenItems()
 ]]></system-out>
 </testcase>
-<testcase name="takesPercentOfSubtotal()" classname="com.acme.shop.pricing.PercentageDiscountTest" time="0.002">
+<testcase name="takesPercentOfSubtotal()" classname="com.acme.shop.pricing.PercentageDiscountTest" time="0">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.PercentageDiscountTest]/[method:takesPercentOfSubtotal()]
 display-name: JUnit Jupiter > PercentageDiscountTest > takesPercentOfSubtotal()
 ]]></system-out>
 </testcase>
-<testcase name="freeShippingFromThreshold()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.012">
+<testcase name="freeShippingFromThreshold()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.003">
 <error message="cannot reserve 1 x chair: only 1 available" type="com.acme.shop.inventory.OutOfStockException"><![CDATA[com.acme.shop.inventory.OutOfStockException: cannot reserve 1 x chair: only 1 available
 	at com.acme.shop.inventory.Inventory.requireAvailable(Inventory.java:26)
 	at com.acme.shop.inventory.Inventory.reserve(Inventory.java:18)
@@ -125,7 +125,7 @@ unique-id: [engine:junit-jupiter]/[class:com.acme.shop.application.CheckoutServi
 display-name: JUnit Jupiter > CheckoutServiceTest > freeShippingFromThreshold()
 ]]></system-out>
 </testcase>
-<testcase name="bulkOrdersGetTheBulkDiscount()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.012">
+<testcase name="bulkOrdersGetTheBulkDiscount()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.006">
 <error message="cannot reserve 10 x pen: only 10 available" type="com.acme.shop.inventory.OutOfStockException"><![CDATA[com.acme.shop.inventory.OutOfStockException: cannot reserve 10 x pen: only 10 available
 	at com.acme.shop.inventory.Inventory.requireAvailable(Inventory.java:26)
 	at com.acme.shop.inventory.Inventory.reserve(Inventory.java:18)
@@ -137,7 +137,7 @@ unique-id: [engine:junit-jupiter]/[class:com.acme.shop.application.CheckoutServi
 display-name: JUnit Jupiter > CheckoutServiceTest > bulkOrdersGetTheBulkDiscount()
 ]]></system-out>
 </testcase>
-<testcase name="taxIsRateOfNetAmount()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0.006">
+<testcase name="taxIsRateOfNetAmount()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0.002">
 <system-out><![CDATA[
 unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.TaxCalculatorTest]/[method:taxIsRateOfNetAmount()]
 display-name: JUnit Jupiter > TaxCalculatorTest > taxIsRateOfNetAmount()

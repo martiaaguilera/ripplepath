@@ -115,7 +115,9 @@ fn replay_of_the_real_history_scores_what_was_measured() {
         assert_eq!((aggregate.failing_cases, aggregate.failing_cases_fully_caught), (5, 4));
         assert_eq!(aggregate.full_suite_fallbacks, 0);
         assert_eq!(aggregate.mean_selected_test_reduction, Some(0.6372));
-        assert_eq!((aggregate.runtime_cases, aggregate.mean_runtime_reduction), (11, Some(0.6569)));
+        assert_eq!((aggregate.runtime_cases, aggregate.mean_runtime_reduction), (11, Some(0.6346)));
+        assert_eq!((aggregate.first_failure_cases, aggregate.mean_first_failure_position), (4, Some(1.75)));
+        assert_eq!((aggregate.time_to_first_failure_cases, aggregate.mean_time_to_first_failure_ms), (4, Some(14.0)));
     }
 
     // (case, selected, total, failed, caught, position of the first failing test)
@@ -150,8 +152,8 @@ fn replay_of_the_real_history_scores_what_was_measured() {
     let case = |name: &str| report.cases.iter().find(|c| c.name == name).unwrap();
     // v4..v5 breaks BulkDiscount, reached from checkout only through DiscountPolicy (OVERRIDES).
     let bulk = &case("v4..v5").modes[1].score;
-    assert_eq!(bulk.time_to_first_failure_ms, Some(39));
-    assert_eq!(bulk.runtime_reduction, Some(0.8193));
+    assert_eq!(bulk.time_to_first_failure_ms, Some(12));
+    assert_eq!(bulk.runtime_reduction, Some(0.6515));
     // v6..v7 breaks tax-rates.properties: no code changed, no reason fired, nothing was selected,
     // and every failure was missed. This is the miss the evaluation exists to expose.
     let resource = case("v6..v7");

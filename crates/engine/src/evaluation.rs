@@ -374,6 +374,12 @@ pub struct ModeAggregate {
     /// Cases with a runtime reduction (every test of head had a recorded duration).
     pub runtime_cases: usize,
     pub mean_runtime_reduction: Option<f64>,
+    /// Failing cases in which some failing test was selected, so a first failure has a position.
+    pub first_failure_cases: usize,
+    pub mean_first_failure_position: Option<f64>,
+    /// Over the failing cases whose first failure has a cumulative recorded duration.
+    pub time_to_first_failure_cases: usize,
+    pub mean_time_to_first_failure_ms: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -417,6 +423,10 @@ pub fn aggregate(modes: &[SelectionMode], cases: &[CaseResult]) -> (Sample, Vec<
             let failed_tests: usize = results.iter().map(|r| r.score.failed_tests).sum();
             let caught_failures: usize = results.iter().map(|r| r.score.caught_failures).sum();
             let runtime: Vec<f64> = results.iter().filter_map(|r| r.score.runtime_reduction).collect();
+            let positions: Vec<f64> =
+                results.iter().filter_map(|r| r.score.first_failure_position).map(|p| p as f64).collect();
+            let first_times: Vec<f64> =
+                results.iter().filter_map(|r| r.score.time_to_first_failure_ms).map(|t| t as f64).collect();
             ModeAggregate {
                 mode,
                 cases: results.len(),
@@ -433,6 +443,10 @@ pub fn aggregate(modes: &[SelectionMode], cases: &[CaseResult]) -> (Sample, Vec<
                 mean_selected_test_reduction: mean(results.iter().filter_map(|r| r.score.selected_test_reduction)),
                 runtime_cases: runtime.len(),
                 mean_runtime_reduction: mean(runtime),
+                first_failure_cases: positions.len(),
+                mean_first_failure_position: mean(positions),
+                time_to_first_failure_cases: first_times.len(),
+                mean_time_to_first_failure_ms: mean(first_times),
             }
         })
         .collect();
@@ -603,6 +617,42 @@ mod tests {
     }
 
     #[test]
+    fn ties_are_broken_by_run_order_alone() {
+        let all = ids(&["a", "b", "c"]);
+        // Equal durations everywhere: the earlier of the two failing tests in run order is first,
+        // whatever its id, and zero-duration tests still give a (zero) cumulative time.
+        let zero = observed(&["a", "c"], &[("a", 0), ("b", 0), ("c", 0)]);
+        let order = ids(&["c", "b", "a"]);
+        let s = score(&plan(SelectionDecision::Selected, &order, &all), &zero);
+        assert_eq!((s.first_failure_position, s.time_to_first_failure_ms), (Some(1), Some(0)));
+        let reversed = ids(&["b", "a", "c"]);
+        let r = score(&plan(SelectionDecision::Selected, &reversed, &all), &zero);
+        assert_eq!((r.first_failure_position, r.time_to_first_failure_ms), (Some(2), Some(0)));
+        // Same selection under two modes scores identically.
+        assert_eq!(s.failing_test_recall, r.failing_test_recall);
+        assert_eq!(s.selected_test_reduction, r.selected_test_reduction);
+    }
+
+    #[test]
+    fn aggregate_time_to_first_failure_counts_only_cases_that_have_one() {
+        let with_first = |position: Option<usize>, ms: Option<u64>| {
+            let mut result = mode_result(SelectionDecision::Selected, 1, position.map_or(0, |_| 1), 0.5);
+            result.score.first_failure_position = position;
+            result.score.time_to_first_failure_ms = ms;
+            result
+        };
+        let cases = vec![
+            case("caught", 1, vec![with_first(Some(1), Some(10))]),
+            case("caught-no-duration", 1, vec![with_first(Some(4), None)]),
+            case("missed", 1, vec![with_first(None, None)]),
+        ];
+        let (_, modes) = aggregate(&[SelectionMode::Balanced], &cases);
+        let m = &modes[0];
+        assert_eq!((m.first_failure_cases, m.mean_first_failure_position), (2, Some(2.5)));
+        assert_eq!((m.time_to_first_failure_cases, m.mean_time_to_first_failure_ms), (1, Some(10.0)));
+    }
+
+    #[test]
     fn unknown_durations_leave_runtime_absent_not_zero() {
         let all = ids(&["a", "b", "c"]);
         let order = ids(&["a", "b"]);
@@ -722,6 +772,8 @@ mod tests {
         assert_eq!(balanced.full_suite_fallbacks, 1);
         assert_eq!(balanced.mean_selected_test_reduction, Some(0.25));
         assert_eq!((balanced.runtime_cases, balanced.mean_runtime_reduction), (0, None));
+        assert_eq!((balanced.first_failure_cases, balanced.mean_first_failure_position), (0, None));
+        assert_eq!((balanced.time_to_first_failure_cases, balanced.mean_time_to_first_failure_ms), (0, None));
 
         let many: Vec<CaseResult> = (0..SMALL_SAMPLE_FAILING_CASES)
             .map(|i| case(&i.to_string(), 1, vec![mode_result(SelectionDecision::Selected, 1, 1, 0.5)]))
