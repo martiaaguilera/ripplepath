@@ -20,9 +20,15 @@ pub(crate) struct LoadedEvidence {
 }
 
 impl LoadedEvidence {
-    pub(crate) fn load(store: &Store) -> Result<Self, StorageError> {
-        let coverage = store.latest_coverage()?;
-        let history = store.test_history()?;
+    /// Evidence recorded at any commit, or only at `visible` commits when given (replay
+    /// evaluation: nothing measured after the evaluated change may inform it).
+    pub(crate) fn load(store: &Store, visible: Option<&BTreeSet<String>>) -> Result<Self, StorageError> {
+        let coverage = store.latest_coverage_among(visible)?;
+        let mut history = store.test_history()?;
+        if let Some(visible) = visible {
+            history.values_mut().for_each(|entries| entries.retain(|e| visible.contains(&e.commit)));
+            history.retain(|_, entries| !entries.is_empty());
+        }
         let covered = coverage.iter().flat_map(|r| r.covered.iter().cloned()).collect();
         let measured_files = coverage.iter().flat_map(|r| r.files.iter().cloned()).collect();
         let runs: BTreeSet<i64> = history.values().flatten().map(|h| h.run_id).collect();

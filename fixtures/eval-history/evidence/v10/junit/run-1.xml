@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="JUnit Jupiter" tests="20" skipped="0" failures="0" errors="0" time="0.237" hostname="redacted" timestamp="2026-10-08T19:05:29">
+<testcase name="percentRoundsHalfUp()" classname="com.acme.shop.domain.MoneyTest" time="0.001">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:percentRoundsHalfUp()]
+display-name: JUnit Jupiter > MoneyTest > percentRoundsHalfUp()
+]]></system-out>
+</testcase>
+<testcase name="unknownCountryIsRefused()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0.002">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.TaxCalculatorTest]/[method:unknownCountryIsRefused()]
+display-name: JUnit Jupiter > TaxCalculatorTest > unknownCountryIsRefused()
+]]></system-out>
+</testcase>
+<testcase name="totalsDiscountTaxAndShipping()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.002">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.application.CheckoutServiceTest]/[method:totalsDiscountTaxAndShipping()]
+display-name: JUnit Jupiter > CheckoutServiceTest > totalsDiscountTaxAndShipping()
+]]></system-out>
+</testcase>
+<testcase name="subtotalSumsLineItems()" classname="com.acme.shop.domain.OrderTest" time="0.001">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.OrderTest]/[method:subtotalSumsLineItems()]
+display-name: JUnit Jupiter > OrderTest > subtotalSumsLineItems()
+]]></system-out>
+</testcase>
+<testcase name="rejectsPercentAbove100()" classname="com.acme.shop.pricing.PercentageDiscountTest" time="0.003">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.PercentageDiscountTest]/[method:rejectsPercentAbove100()]
+display-name: JUnit Jupiter > PercentageDiscountTest > rejectsPercentAbove100()
+]]></system-out>
+</testcase>
+<testcase name="formatsAsEuros()" classname="com.acme.shop.domain.MoneyTest" time="0.066">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:formatsAsEuros()]
+display-name: JUnit Jupiter > MoneyTest > formatsAsEuros()
+]]></system-out>
+</testcase>
+<testcase name="reservesStockForEveryItem()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.016">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.application.CheckoutServiceTest]/[method:reservesStockForEveryItem()]
+display-name: JUnit Jupiter > CheckoutServiceTest > reservesStockForEveryItem()
+]]></system-out>
+</testcase>
+<testcase name="refusesMoreThanAvailable()" classname="com.acme.shop.inventory.InventoryTest" time="0.006">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.inventory.InventoryTest]/[method:refusesMoreThanAvailable()]
+display-name: JUnit Jupiter > InventoryTest > refusesMoreThanAvailable()
+]]></system-out>
+</testcase>
+<testcase name="allowsReservingExactlyAllStock()" classname="com.acme.shop.inventory.InventoryTest" time="0.001">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.inventory.InventoryTest]/[method:allowsReservingExactlyAllStock()]
+display-name: JUnit Jupiter > InventoryTest > allowsReservingExactlyAllStock()
+]]></system-out>
+</testcase>
+<testcase name="addsAndSubtracts()" classname="com.acme.shop.domain.MoneyTest" time="0.012">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:addsAndSubtracts()]
+display-name: JUnit Jupiter > MoneyTest > addsAndSubtracts()
+]]></system-out>
+</testcase>
+<testcase name="reservesAvailableStock()" classname="com.acme.shop.inventory.InventoryTest" time="0.001">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.inventory.InventoryTest]/[method:reservesAvailableStock()]
+display-name: JUnit Jupiter > InventoryTest > reservesAvailableStock()
+]]></system-out>
+</testcase>
+<testcase name="noDiscountBelowTenItems()" classname="com.acme.shop.pricing.BulkDiscountTest" time="0">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.BulkDiscountTest]/[method:noDiscountBelowTenItems()]
+display-name: JUnit Jupiter > BulkDiscountTest > noDiscountBelowTenItems()
+]]></system-out>
+</testcase>
+<testcase name="minusNeverGoesBelowZero()" classname="com.acme.shop.domain.MoneyTest" time="0.002">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.MoneyTest]/[method:minusNeverGoesBelowZero()]
+display-name: JUnit Jupiter > MoneyTest > minusNeverGoesBelowZero()
+]]></system-out>
+</testcase>
+<testcase name="loadsRatesFromResource()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0.001">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.TaxCalculatorTest]/[method:loadsRatesFromResource()]
+display-name: JUnit Jupiter > TaxCalculatorTest > loadsRatesFromResource()
+]]></system-out>
+</testcase>
+<testcase name="rejectsNonPositiveQuantity()" classname="com.acme.shop.domain.OrderTest" time="0.006">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.domain.OrderTest]/[method:rejectsNonPositiveQuantity()]
+display-name: JUnit Jupiter > OrderTest > rejectsNonPositiveQuantity()
+]]></system-out>
+</testcase>
+<testcase name="appliesFromTenItems()" classname="com.acme.shop.pricing.BulkDiscountTest" time="0">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.BulkDiscountTest]/[method:appliesFromTenItems()]
+display-name: JUnit Jupiter > BulkDiscountTest > appliesFromTenItems()
+]]></system-out>
+</testcase>
+<testcase name="takesPercentOfSubtotal()" classname="com.acme.shop.pricing.PercentageDiscountTest" time="0.001">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.PercentageDiscountTest]/[method:takesPercentOfSubtotal()]
+display-name: JUnit Jupiter > PercentageDiscountTest > takesPercentOfSubtotal()
+]]></system-out>
+</testcase>
+<testcase name="freeShippingFromThreshold()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.003">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.application.CheckoutServiceTest]/[method:freeShippingFromThreshold()]
+display-name: JUnit Jupiter > CheckoutServiceTest > freeShippingFromThreshold()
+]]></system-out>
+</testcase>
+<testcase name="bulkOrdersGetTheBulkDiscount()" classname="com.acme.shop.application.CheckoutServiceTest" time="0.012">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.application.CheckoutServiceTest]/[method:bulkOrdersGetTheBulkDiscount()]
+display-name: JUnit Jupiter > CheckoutServiceTest > bulkOrdersGetTheBulkDiscount()
+]]></system-out>
+</testcase>
+<testcase name="taxIsRateOfNetAmount()" classname="com.acme.shop.pricing.TaxCalculatorTest" time="0">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.shop.pricing.TaxCalculatorTest]/[method:taxIsRateOfNetAmount()]
+display-name: JUnit Jupiter > TaxCalculatorTest > taxIsRateOfNetAmount()
+]]></system-out>
+</testcase>
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]
+display-name: JUnit Jupiter
+]]></system-out>
+</testsuite>

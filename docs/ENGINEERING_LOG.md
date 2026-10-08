@@ -2,6 +2,35 @@
 
 Meaningful discoveries only, newest first.
 
+## 2026-10-08 — Offline replay evaluation of test selection
+
+**Leakage is a property of the evidence query, not of the database.** The evaluation reuses one
+database holding the whole history's coverage and CI runs, and restricts each case to evidence
+recorded at base or its ancestors (`AnalyzeOptions::evidence_commits`). The subtle part was
+coverage: "latest report per test" chosen first and filtered second lets a newer report from head
+hide the older visible one, so the restriction is applied before the choice
+(`Store::latest_coverage_among`). The leakage test proves a database with head and later evidence
+gives byte-identical results, and that the same database *without* the restriction changes the
+decision — otherwise the test could pass vacuously.
+
+**Recall without failures is undefined, not 100 %.** Six of the eleven fixture cases had no failing
+test; scoring them as perfect recall would inflate the headline. Recall is pooled over failing tests
+across cases and absent when nothing failed; the sample size leads the report and anything under
+30 failing cases is labelled "small sample — not statistically meaningful".
+
+**The first real measurement found a real gap.** On `fixtures/eval-history` (11 cases, 5 failing,
+15 failing tests, evidence from actually running the tests at every snapshot), recall is 10/15 in
+every mode. All five misses are one change that only edits `tax-rates.properties`: the Java code
+reads it by name at run time, Ripplepath has no edge to it, it matches no fallback pattern, and an
+unsupported-file change is low severity — so zero tests were selected with no reason given. That is
+left visible rather than fixed with a rule tuned to this fixture; a resource-file fallback (or
+resource-name edges) is the follow-up the number points to.
+
+**Re-collection as provenance check.** The salvaged evidence had no provenance record, so it was
+collected again with `scripts/collect-eval-history.sh`; the two collections differ only in
+durations, timestamps and JaCoCo session times. Runtime figures are millisecond-level single-run
+durations and are documented as such, not as CI savings.
+
 ## 2026-10-08 — Read-only MCP server for coding agents
 
 **The protocol moved under us.** The current MCP revision (`2026-07-28`) is stateless: no

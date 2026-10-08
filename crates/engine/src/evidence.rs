@@ -108,6 +108,7 @@ fn resolve_test(snapshot: &Snapshot, mapper: &PathMapper<'_>, selector: &str) ->
 }
 
 /// One coverage file to ingest.
+#[derive(Clone, Copy)]
 pub struct CoverageInput<'a> {
     pub format: CoverageFormat,
     pub text: &'a str,
@@ -124,26 +125,62 @@ pub fn ingest_coverage(
     coverage: CoverageInput<'_>,
     limits: &Limits,
 ) -> Result<IngestOutcome, AnalysisError> {
-    let CoverageInput { format, text: input, source, test } = coverage;
-    let reports: Vec<CoverageReport> = match format {
-        CoverageFormat::Jacoco => vec![parse_jacoco(input)?],
-        CoverageFormat::Lcov => parse_lcov(input)?,
-    };
+    let mut outcomes = ingest_coverage_batch(repo_path, revision, db, &[coverage], limits)?;
+    Ok(outcomes.pop().unwrap_or_default())
+}
+
+/// Ingests several coverage files measured at one revision, building its snapshot once. Nothing is
+/// stored unless every file parses and names a known test.
+pub fn ingest_coverage_batch(
+    repo_path: &Path,
+    revision: &str,
+    db: &Path,
+    inputs: &[CoverageInput<'_>],
+    limits: &Limits,
+) -> Result<Vec<IngestOutcome>, AnalysisError> {
+    let parsed = inputs
+        .iter()
+        .map(|input| match input.format {
+            CoverageFormat::Jacoco => Ok(vec![parse_jacoco(input.text)?]),
+            CoverageFormat::Lcov => parse_lcov(input.text),
+        })
+        .collect::<Result<Vec<Vec<CoverageReport>>, _>>()?;
     let (snapshot, mut store, commit) = open_snapshot(repo_path, revision, db, limits)?;
     let workdir = Repo::open(repo_path)?.workdir().map(Path::to_path_buf);
     let mapper = PathMapper::new(&snapshot, workdir.as_deref().or(Some(repo_path)));
+    let mut outcomes = Vec::with_capacity(inputs.len());
+    let mut to_store = Vec::new();
+    for (input, reports) in inputs.iter().zip(parsed) {
+        let (outcome, stored) = map_coverage(&snapshot, &mapper, &commit, input, reports)?;
+        outcomes.push(outcome);
+        to_store.extend(stored);
+    }
+    for report in &to_store {
+        store.add_coverage(report)?;
+    }
+    Ok(outcomes)
+}
+
+fn map_coverage(
+    snapshot: &Snapshot,
+    mapper: &PathMapper<'_>,
+    commit: &str,
+    input: &CoverageInput<'_>,
+    reports: Vec<CoverageReport>,
+) -> Result<(IngestOutcome, Vec<StoredCoverage>), AnalysisError> {
+    let CoverageInput { format, source, test, .. } = *input;
     let format_name = match format {
         CoverageFormat::Jacoco => "jacoco",
         CoverageFormat::Lcov => "lcov",
     };
-
-    let mut outcome = IngestOutcome { commit: commit.clone(), ..IngestOutcome::default() };
+    let mut stored = Vec::with_capacity(reports.len());
+    let mut outcome = IngestOutcome { commit: commit.to_owned(), ..IngestOutcome::default() };
     for report in reports {
         // An explicit `--test` wins; otherwise LCOV's TN names the test; otherwise aggregate.
         let selector = test.map(str::to_owned).or(report.test.clone());
         let test_symbol = match selector {
             Some(selector) => Some(
-                resolve_test(&snapshot, &mapper, &selector)
+                resolve_test(snapshot, mapper, &selector)
                     .ok_or_else(|| AnalysisError::UnknownTest(selector.clone()))?,
             ),
             None => None,
@@ -167,7 +204,7 @@ pub fn ingest_coverage(
                 continue;
             }
             files.insert(path.to_owned());
-            let index = LineIndex::new(&snapshot, path);
+            let index = LineIndex::new(snapshot, path);
             for (&line, &hit) in &file.lines {
                 if hit {
                     covered.extend(index.symbols_for(line, 1).into_iter().map(|id| id.as_str().to_owned()));
@@ -177,17 +214,17 @@ pub fn ingest_coverage(
         outcome.reports += 1;
         outcome.unmapped += unmapped as usize;
         outcome.covered_symbols += covered.len();
-        store.add_coverage(&StoredCoverage {
-            commit: commit.clone(),
+        stored.push(StoredCoverage {
+            commit: commit.to_owned(),
             format: format_name.to_owned(),
             test_symbol: test_symbol.map(|s| s.as_str().to_owned()),
             source: source.to_owned(),
             unmapped_files: unmapped,
             files,
             covered,
-        })?;
+        });
     }
-    Ok(outcome)
+    Ok((outcome, stored))
 }
 
 /// Lookup from JUnit (classname, name) to test symbols.
@@ -228,6 +265,41 @@ impl<'a> TestIndex<'a> {
     }
 }
 
+/// One JUnit result mapped onto the test symbols of a snapshot.
+pub(crate) struct MappedCase<'c> {
+    /// The test's symbol id, or `junit:<classname>#<name>` when it maps to no test in the snapshot.
+    pub(crate) key: String,
+    pub(crate) mapped: bool,
+    pub(crate) case: &'c TestCaseResult,
+}
+
+/// Maps JUnit results onto `snapshot`; `workdir` lets absolute paths written by a tool be made
+/// relative to the repository.
+pub(crate) fn map_junit<'c>(
+    snapshot: &Snapshot,
+    workdir: Option<&Path>,
+    cases: &'c [TestCaseResult],
+) -> Vec<MappedCase<'c>> {
+    let mapper = PathMapper::new(snapshot, workdir);
+    let index = TestIndex::new(snapshot);
+    cases
+        .iter()
+        .map(|case| match index.map(snapshot, &mapper, case) {
+            Some(id) => MappedCase { key: id.as_str().to_owned(), mapped: true, case },
+            None => MappedCase { key: format!("junit:{}#{}", case.classname, case.name), mapped: false, case },
+        })
+        .collect()
+}
+
+pub(crate) fn outcome_name(outcome: Outcome) -> &'static str {
+    match outcome {
+        Outcome::Passed => "PASSED",
+        Outcome::Failed => "FAILED",
+        Outcome::Error => "ERROR",
+        Outcome::Skipped => "SKIPPED",
+    }
+}
+
 pub fn ingest_junit(
     repo_path: &Path,
     revision: &str,
@@ -239,39 +311,24 @@ pub fn ingest_junit(
     let cases = parse_junit(input)?;
     let (snapshot, mut store, commit) = open_snapshot(repo_path, revision, db, limits)?;
     let workdir = Repo::open(repo_path)?.workdir().map(Path::to_path_buf);
-    let mapper = PathMapper::new(&snapshot, workdir.as_deref().or(Some(repo_path)));
-    let index = TestIndex::new(&snapshot);
 
     let mut outcome = IngestOutcome { commit: commit.clone(), reports: 1, ..IngestOutcome::default() };
     let mut results: BTreeMap<String, StoredResult> = BTreeMap::new();
-    for case in &cases {
-        let mapped = index.map(&snapshot, &mapper, case);
-        let key = match &mapped {
-            Some(id) => {
-                outcome.mapped += 1;
-                id.as_str().to_owned()
+    for MappedCase { key, mapped, case } in map_junit(&snapshot, workdir.as_deref().or(Some(repo_path)), &cases) {
+        if mapped {
+            outcome.mapped += 1;
+        } else {
+            outcome.unmapped += 1;
+            if outcome.unmapped_examples.len() < UNMAPPED_EXAMPLES {
+                outcome.unmapped_examples.push(key.clone());
             }
-            None => {
-                outcome.unmapped += 1;
-                let key = format!("junit:{}#{}", case.classname, case.name);
-                if outcome.unmapped_examples.len() < UNMAPPED_EXAMPLES {
-                    outcome.unmapped_examples.push(key.clone());
-                }
-                key
-            }
-        };
-        let outcome_text = match case.outcome {
-            Outcome::Passed => "PASSED",
-            Outcome::Failed => "FAILED",
-            Outcome::Error => "ERROR",
-            Outcome::Skipped => "SKIPPED",
-        };
+        }
         results.insert(
             key.clone(),
             StoredResult {
                 test_key: key,
-                mapped: mapped.is_some(),
-                outcome: outcome_text.to_owned(),
+                mapped,
+                outcome: outcome_name(case.outcome).to_owned(),
                 duration_ms: case.duration_ms,
                 failed_attempts: case.failed_attempts,
                 failure_fingerprint: case.failure_fingerprint.clone(),

@@ -17,13 +17,13 @@ Status: Java and TypeScript/JavaScript frontends. Planned components are marked 
 | Crate | Responsibility | I/O |
 |---|---|---|
 | `core` | `SymbolId`, `Symbol`, `Edge`, `EdgeKind`, `Evidence`, `Fingerprint`. Plain data with total orderings. | none |
-| `git` | Open repo (isolated config), resolve revisions, list trees, read blobs with size cap, path validation, line diff, rename pairing. | object DB only |
+| `git` | Open repo (isolated config), resolve revisions, list trees, read blobs with size cap, path validation, line diff, rename pairing, bounded ancestor walk. | object DB only |
 | `lang` | Language frontends `java` and `ts`, each `extract` (per file, pure) + `resolve` (per snapshot, pure). Languages resolve independently; no cross-language edges. | none |
 | `graph` | `CodeGraph` (sorted edges, adjacency indices), `impact` (BFS with explaining paths) and `dependency_path` (shortest evidence-ranked chain between two symbols). | none |
 | `evidence` | Bounded parsers for JaCoCo XML, LCOV and JUnit XML (no entity expansion). Test evidence semantics: docs/TEST_INTELLIGENCE.md. | none |
 | `storage` | SQLite: migrations, persistent fact cache, indexed graph updated by difference. | one DB file |
-| `engine` | Orchestration: snapshots, fact cache, change classification, hunks, uncertainty, report. Pure modules `config`, `architecture`, `owners`, `api_surface`, `risk`, `policy`; `assess` reads `ripplepath.yml` (base) and CODEOWNERS (head) through `git` and calls them. | via `git` |
-| `cli` | `ripplepath analyze | index | ingest | architecture check | serve | mcp | demo`. Text renderer neutralises terminal control characters. Markdown, SARIF and workflow-command renderers (`markdown.rs`, `sarif.rs`, `annotations.rs`) share located findings (`findings.rs`). Exit 2 on policy failure with `--fail-on-policy`. | stdout/files |
+| `engine` | Orchestration: snapshots, fact cache, change classification, hunks, uncertainty, report. Pure modules `config`, `architecture`, `owners`, `api_surface`, `risk`, `policy`; `assess` reads `ripplepath.yml` (base) and CODEOWNERS (head) through `git` and calls them. `evaluation` replays historical changes with evidence restricted to base's ancestors; its scoring and aggregation are pure. | via `git` |
+| `cli` | `ripplepath analyze | index | ingest | evaluate | architecture check | serve | mcp | demo`. Text renderer neutralises terminal control characters. Markdown, SARIF and workflow-command renderers (`markdown.rs`, `sarif.rs`, `annotations.rs`) share located findings (`findings.rs`). Exit 2 on policy failure with `--fail-on-policy`. | stdout/files |
 | `mcp` | Read-only Model Context Protocol adapter over stdio (hand-written JSON-RPC, dual-era: 2026-07-28 stateless and handshake revisions). Tools project engine output; single-revision queries via `engine::explore` (`what_if`, symbol info, paths). ADR 0007, docs/MCP.md. | stdio |
 | `server` | Axum API `/api/v1/*` + static UI, Host validation, CSP, bounded analysis concurrency. | HTTP |
 | `web/` | React + TypeScript strict UI. Renders the report; never infers relationships. | HTTP |

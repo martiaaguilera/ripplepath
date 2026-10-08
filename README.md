@@ -96,6 +96,15 @@ optional single PR comment, and exit status 2 when the merge policy fails. Local
 `ripplepath analyze --base main --format markdown|sarif|github-annotations` or `--output-dir out/`.
 Details, permissions and security notes: [docs/GITHUB_INTEGRATION.md](docs/GITHUB_INTEGRATION.md).
 
+## Offline evaluation
+
+`ripplepath evaluate --repo . --cases cases.json --db evidence.db` replays past changes using only
+evidence recorded at each change's base or earlier, and scores the selection against the tests that
+really failed at head. On the bundled 12-snapshot Java history (11 changes, 5 with failures, 15
+failing tests, outcomes from actually running the tests) recall is 10/15: all five misses come from
+one change to a resource file the tests read at run time. A small sample, not a statistic; method
+and per-case results in [docs/TEST_INTELLIGENCE.md](docs/TEST_INTELLIGENCE.md) §6.
+
 ## How it works
 
 1. Resolve `base` and `head` to trees; list files; pair renames (exact blob, then ≥ 50% line similarity).
@@ -121,7 +130,7 @@ Details: [docs/SPEC.md](docs/SPEC.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.
 
 ## Roadmap (not implemented yet)
 
-Offline selection evaluation · benchmarks · first tagged binary release.
+Benchmarks · first tagged binary release.
 
 ## Author
 
