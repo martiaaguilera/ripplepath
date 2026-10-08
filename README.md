@@ -10,8 +10,9 @@ radius, and what it could not determine.
 > diff → symbol-level change set → evidence-backed impact paths → static test recommendations →
 > CLI, JSON, local API and web UI, with a persistent incremental index and optional ingestion of
 > JaCoCo/LCOV/JUnit evidence (coverage edges, flakiness, selection modes; see
-> [docs/TEST_INTELLIGENCE.md](docs/TEST_INTELLIGENCE.md)). Architecture rules, the risk model and
-> the GitHub Action are planned and not yet implemented. Nothing below claims otherwise.
+> [docs/TEST_INTELLIGENCE.md](docs/TEST_INTELLIGENCE.md)), architecture rules, risk model v1,
+> merge-policy gates and a GitHub Action. No binary release has been published yet. Nothing below
+> claims otherwise.
 
 ## What it does today
 
@@ -79,6 +80,22 @@ evidence (edge kind, evidence class, file:line) and uncertainty as the report. C
 `claude mcp add ripplepath -- ripplepath mcp --repo .`. Details and security model:
 [docs/MCP.md](docs/MCP.md).
 
+## GitHub Action
+
+```yaml
+- uses: actions/checkout@v7
+  with: { fetch-depth: 0, persist-credentials: false }
+- uses: martiaaguilera/ripplepath@<commit-sha>   # a v* tag once releases exist
+  with:
+    comment: true     # needs pull-requests: write
+    sarif: false      # true needs security-events: write
+```
+
+Step summary, line annotations, `analysis.json` / `summary.md` / `ripplepath.sarif` artifacts, an
+optional single PR comment, and exit status 2 when the merge policy fails. Locally:
+`ripplepath analyze --base main --format markdown|sarif|github-annotations` or `--output-dir out/`.
+Details, permissions and security notes: [docs/GITHUB_INTEGRATION.md](docs/GITHUB_INTEGRATION.md).
+
 ## How it works
 
 1. Resolve `base` and `head` to trees; list files; pair renames (exact blob, then ≥ 50% line similarity).
@@ -104,9 +121,7 @@ Details: [docs/SPEC.md](docs/SPEC.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.
 
 ## Roadmap (not implemented yet)
 
-Architecture rules and base/head drift · versioned deterministic risk decomposition ·
-GitHub Action with step summary and SARIF · offline selection evaluation ·
-benchmarks.
+Offline selection evaluation · benchmarks · first tagged binary release.
 
 ## Author
 

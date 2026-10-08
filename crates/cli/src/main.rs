@@ -6,6 +6,13 @@ use clap::{Parser, Subcommand, ValueEnum};
 use ripplepath_engine::{AnalysisReport, AnalyzeOptions, analyze, fixture};
 use ripplepath_graph::ImpactOptions;
 
+mod annotations;
+mod findings;
+mod markdown;
+mod output;
+mod sarif;
+#[cfg(test)]
+mod test_support;
 mod text;
 
 /// Change intelligence for Git repositories: what a change touches, what depends on it, and which
@@ -161,11 +168,19 @@ struct AnalyzeArgs {
     /// Head revision.
     #[arg(long, default_value = "HEAD")]
     head: String,
-    #[arg(long, value_enum, default_value_t = Format::Text)]
-    format: Format,
+    #[arg(long, value_enum, default_value_t = output::ReportFormat::Text)]
+    format: output::ReportFormat,
     /// Write the report to this file instead of stdout.
     #[arg(long, short)]
     output: Option<PathBuf>,
+    /// Also write analysis.json, summary.md, ripplepath.sarif and annotations.txt into this
+    /// directory (created if missing). `--format` output still goes to stdout or `--output`.
+    #[arg(long)]
+    output_dir: Option<PathBuf>,
+    /// Prefix for file paths in SARIF and annotations: the repository's path relative to the CI
+    /// workspace, when it is not checked out at the workspace root.
+    #[arg(long, default_value = "")]
+    path_prefix: String,
     /// Maximum dependency depth to follow from changed symbols.
     #[arg(long, default_value_t = 6, value_parser = clap::value_parser!(u32).range(1..=32))]
     max_depth: u32,
@@ -282,7 +297,14 @@ fn run_analyze(args: AnalyzeArgs) -> Result<AnalysisReport, String> {
         ModeArg::FastFeedback => ripplepath_engine::SelectionMode::FastFeedback,
     });
     let report = analyze(&options).map_err(|e| e.to_string())?;
-    emit(&report, args.format, args.output.as_deref())?;
+    if let Some(dir) = &args.output_dir {
+        output::write_output_dir(&report, dir, &args.path_prefix)?;
+    }
+    let rendered = output::render(&report, args.format, &args.path_prefix)?;
+    match &args.output {
+        Some(path) => std::fs::write(path, rendered).map_err(|e| format!("cannot write {}: {e}", path.display()))?,
+        None => write_stdout(&rendered)?,
+    }
     Ok(report)
 }
 

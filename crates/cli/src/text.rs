@@ -380,7 +380,7 @@ fn severity(severity: Severity) -> &'static str {
     }
 }
 
-fn duration(ms: u64) -> String {
+pub(crate) fn duration(ms: u64) -> String {
     if ms >= 60_000 {
         format!("{}m{:02}s", ms / 60_000, (ms % 60_000) / 1000)
     } else if ms >= 1000 {
@@ -415,7 +415,7 @@ fn path(out: &mut String, hops: &[Hop]) {
 /// - `java:com.acme.bank.domain.Account#withdraw(Money)` → `domain.Account#withdraw(Money)`
 /// - `ts:src/pricing/discount.ts#applyDiscount` → `discount.ts#applyDiscount`
 /// - `file:src/a/B.java` → `B.java`
-fn display(id: &SymbolId) -> String {
+pub(crate) fn display(id: &SymbolId) -> String {
     let raw = id.as_str();
     let (prefix, body) = raw.split_once(':').unwrap_or(("", raw));
     let (qualified, member) = body.split_once('#').map_or((body, None), |(q, m)| (q, Some(m)));
