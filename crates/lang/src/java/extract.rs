@@ -3,7 +3,9 @@ use std::time::Duration;
 use ripplepath_core::{SymbolKind, Visibility};
 use tree_sitter::Node;
 
-use super::facts::{BodyRef, FieldDecl, Import, JavaFile, Local, MethodDecl, Param, Receiver, TypeDecl, TypeUse};
+use super::facts::{
+    BodyRef, FieldDecl, Import, JavaFile, Local, LocalInit, MethodDecl, Param, Receiver, TypeDecl, TypeUse,
+};
 use crate::syntax::{self, ParseError, line, named_children, span, text};
 
 /// Nested type declarations deeper than this are not indexed. Real code rarely nests beyond 3;
@@ -111,7 +113,11 @@ fn modifiers(node: Node<'_>, source: &str) -> Modifiers {
             "static" => result.is_static = true,
             "marker_annotation" | "annotation" => {
                 if let Some(name) = child.child_by_field_name("name") {
-                    result.annotations.push(TypeUse { name: compact(text(name, source)), line: line(child) });
+                    result.annotations.push(TypeUse {
+                        name: compact(text(name, source)),
+                        line: line(child),
+                        args: Vec::new(),
+                    });
                 }
             }
             _ => {}
@@ -254,7 +260,11 @@ fn fields(node: Node<'_>, cx: &MemberContext<'_>) -> Vec<FieldDecl> {
     let mods = modifiers(node, source);
     let Some(ty) = node.child_by_field_name("type").and_then(|t| type_use(t, source)).or_else(|| {
         // Primitive fields have no type to resolve but are still symbols worth tracking.
-        node.child_by_field_name("type").map(|t| TypeUse { name: text(t, source).to_owned(), line: line(t) })
+        node.child_by_field_name("type").map(|t| TypeUse {
+            name: text(t, source).to_owned(),
+            line: line(t),
+            args: Vec::new(),
+        })
     }) else {
         return Vec::new();
     };
@@ -292,7 +302,7 @@ fn enum_constant(node: Node<'_>, cx: &MemberContext<'_>) -> FieldDecl {
     let enum_simple = cx.type_name.rsplit('.').next().unwrap_or(cx.type_name);
     let mut refs = Vec::new();
     let arity = node.child_by_field_name("arguments").map_or(0, argument_count);
-    refs.push(BodyRef::New { ty: TypeUse { name: enum_simple.to_owned(), line: line(node) }, arity });
+    refs.push(BodyRef::New { ty: TypeUse { name: enum_simple.to_owned(), line: line(node), args: Vec::new() }, arity });
     if let Some(arguments) = node.child_by_field_name("arguments") {
         walk_body(arguments, source, &mut refs, &mut Vec::new());
     }
@@ -301,7 +311,7 @@ fn enum_constant(node: Node<'_>, cx: &MemberContext<'_>) -> FieldDecl {
     }
     FieldDecl {
         name: name.to_owned(),
-        ty: TypeUse { name: enum_simple.to_owned(), line: line(node) },
+        ty: TypeUse { name: enum_simple.to_owned(), line: line(node), args: Vec::new() },
         visibility: Visibility::Public,
         is_static: true,
         span: span(node),
@@ -331,7 +341,7 @@ fn method(node: Node<'_>, is_constructor: bool, cx: &MemberContext<'_>) -> Metho
     let default_visibility = if cx.in_interface { Visibility::Public } else { Visibility::Package };
 
     let mut locals: Vec<Local> =
-        params.iter().map(|p| Local { name: p.name.clone(), ty: Some(p.ty.clone()) }).collect();
+        params.iter().map(|p| Local { name: p.name.clone(), ty: Some(p.ty.clone()), init: None }).collect();
     let mut refs = Vec::new();
     if let Some(body) = node.child_by_field_name("body") {
         walk_body(body, source, &mut refs, &mut locals);
@@ -369,8 +379,11 @@ fn parameters(node: Node<'_>, source: &str) -> (Vec<Param>, bool) {
                 let dims = child.child_by_field_name("dimensions").map_or(0, |d| text(d, source).matches('[').count());
                 params.push(Param {
                     name: text(name_node, source).to_owned(),
-                    ty: type_use(ty_node, source)
-                        .unwrap_or(TypeUse { name: text(ty_node, source).to_owned(), line: line(ty_node) }),
+                    ty: type_use(ty_node, source).unwrap_or(TypeUse {
+                        name: text(ty_node, source).to_owned(),
+                        line: line(ty_node),
+                        args: Vec::new(),
+                    }),
                     signature_text: format!("{}{}", signature_text(ty_node, source), "[]".repeat(dims)),
                 });
             }
@@ -388,8 +401,11 @@ fn parameters(node: Node<'_>, source: &str) -> (Vec<Param>, bool) {
                     .unwrap_or_default();
                 params.push(Param {
                     name,
-                    ty: type_use(*ty_node, source)
-                        .unwrap_or(TypeUse { name: text(*ty_node, source).to_owned(), line: line(*ty_node) }),
+                    ty: type_use(*ty_node, source).unwrap_or(TypeUse {
+                        name: text(*ty_node, source).to_owned(),
+                        line: line(*ty_node),
+                        args: Vec::new(),
+                    }),
                     signature_text: format!("{}...", signature_text(*ty_node, source)),
                 });
             }
@@ -472,7 +488,38 @@ fn erase_bounded(node: Node<'_>, source: &str, depth: usize) -> Option<String> {
 }
 
 fn type_use(node: Node<'_>, source: &str) -> Option<TypeUse> {
-    erase(node, source).map(|name| TypeUse { name, line: line(node) })
+    erase(node, source).map(|name| TypeUse { name, line: line(node), args: type_args(node, source) })
+}
+
+/// Erased top-level type arguments; see `TypeUse::args`.
+fn type_args(node: Node<'_>, source: &str) -> Vec<String> {
+    let generic = match node.kind() {
+        "annotated_type" => named_children(node).into_iter().last().filter(|n| n.kind() == "generic_type"),
+        "generic_type" => Some(node),
+        _ => None,
+    };
+    let Some(arguments) = generic.and_then(|g| named_children(g).into_iter().find(|n| n.kind() == "type_arguments"))
+    else {
+        return Vec::new();
+    };
+    named_children(arguments)
+        .into_iter()
+        .filter(|n| !is_comment(n.kind()) && !matches!(n.kind(), "annotation" | "marker_annotation"))
+        .map(|arg| match arg.kind() {
+            // `? extends X` reads as an X; `?` and `? super X` give no usable element type.
+            "wildcard" if has_child_kind(arg, "extends") => {
+                named_children(arg).into_iter().last().and_then(|bound| erase(bound, source)).unwrap_or_default()
+            }
+            // Arrays erase to their element type elsewhere, which would mistype `List<Job[]>`.
+            "wildcard" | "array_type" => String::new(),
+            _ => erase(arg, source).unwrap_or_default(),
+        })
+        .collect()
+}
+
+fn has_child_kind(node: Node<'_>, kind: &str) -> bool {
+    let mut cursor = node.walk();
+    node.children(&mut cursor).any(|c| c.kind() == kind)
 }
 
 /// Parameter type text for symbol identity: erased, but keeping array dimensions because
@@ -666,13 +713,34 @@ fn walk_body<'tree>(root: Node<'tree>, source: &str, refs: &mut Vec<BodyRef>, lo
                             .and_then(|v| v.child_by_field_name("type"))
                             .and_then(|t| type_use(t, source))
                     });
-                    locals.push(Local { name: text(name, source).to_owned(), ty: inferred });
+                    // `var x = repo.find(id)`: the type is whatever `find` declares, which only
+                    // resolution can know. Keep the initializer as a receiver expression for it.
+                    // Primitives also have no `declared` type, so check for `var` explicitly.
+                    let is_var = ty_node.is_some_and(|t| t.kind() == "type_identifier" && text(t, source) == "var");
+                    let init = match (is_var && inferred.is_none(), declarator.child_by_field_name("value")) {
+                        (true, Some(value)) => {
+                            Some(receiver(value, source, 0)).filter(|r| *r != Receiver::Unknown).map(LocalInit::Expr)
+                        }
+                        _ => None,
+                    };
+                    locals.push(Local { name: text(name, source).to_owned(), ty: inferred, init });
                 }
             }
             "formal_parameter" | "enhanced_for_statement" | "resource" => {
                 if let Some(name) = node.child_by_field_name("name") {
-                    let ty = node.child_by_field_name("type").and_then(|t| type_use(t, source));
-                    locals.push(Local { name: text(name, source).to_owned(), ty });
+                    let ty_node = node.child_by_field_name("type");
+                    let ty = ty_node.and_then(|t| type_use(t, source));
+                    let is_var = ty_node.is_some_and(|t| t.kind() == "type_identifier" && text(t, source) == "var");
+                    let init = match (node.kind(), is_var, node.child_by_field_name("value")) {
+                        ("enhanced_for_statement", true, Some(iterable)) => Some(receiver(iterable, source, 0))
+                            .filter(|r| *r != Receiver::Unknown)
+                            .map(LocalInit::ElementOf),
+                        ("resource", true, Some(value)) => {
+                            Some(receiver(value, source, 0)).filter(|r| *r != Receiver::Unknown).map(LocalInit::Expr)
+                        }
+                        _ => None,
+                    };
+                    locals.push(Local { name: text(name, source).to_owned(), ty, init });
                 }
             }
             "catch_formal_parameter" => {
@@ -681,23 +749,41 @@ fn walk_body<'tree>(root: Node<'tree>, source: &str, refs: &mut Vec<BodyRef>, lo
                         .into_iter()
                         .find(|n| n.kind() == "catch_type")
                         .and_then(|c| named_children(c).into_iter().find_map(|t| type_use(t, source)));
-                    locals.push(Local { name: text(name, source).to_owned(), ty });
-                }
-            }
-            "inferred_parameters" => {
-                for param in named_children(node) {
-                    locals.push(Local { name: text(param, source).to_owned(), ty: None });
+                    locals.push(Local { name: text(name, source).to_owned(), ty, init: None });
                 }
             }
             "lambda_expression" => {
-                if let Some(param) = node.child_by_field_name("parameters").filter(|p| p.kind() == "identifier") {
-                    locals.push(Local { name: text(param, source).to_owned(), ty: None });
+                // Typed parameters `(Job j) -> ...` are `formal_parameter`s, handled above.
+                let params = match node.child_by_field_name("parameters") {
+                    Some(p) if p.kind() == "identifier" => vec![p],
+                    Some(p) if p.kind() == "inferred_parameters" => {
+                        named_children(p).into_iter().filter(|n| n.kind() == "identifier").collect()
+                    }
+                    _ => Vec::new(),
+                };
+                // `xs.forEach(x -> ...)`: the call the lambda is an argument of says what `x` is.
+                let call = node
+                    .parent()
+                    .filter(|p| p.kind() == "argument_list")
+                    .and_then(|args| args.parent())
+                    .filter(|c| c.kind() == "method_invocation");
+                for (index, param) in params.into_iter().enumerate() {
+                    let init = call.and_then(|call| {
+                        let method = text(call.child_by_field_name("name")?, source).to_owned();
+                        let receiver = receiver(call.child_by_field_name("object")?, source, 0);
+                        (receiver != Receiver::Unknown).then(|| LocalInit::LambdaParam {
+                            receiver,
+                            method,
+                            index: u32::try_from(index).unwrap_or(u32::MAX),
+                        })
+                    });
+                    locals.push(Local { name: text(param, source).to_owned(), ty: None, init });
                 }
             }
             "instanceof_expression" => {
                 if let Some(name) = node.child_by_field_name("name") {
                     let ty = node.child_by_field_name("right").and_then(|t| type_use(t, source));
-                    locals.push(Local { name: text(name, source).to_owned(), ty });
+                    locals.push(Local { name: text(name, source).to_owned(), ty, init: None });
                 }
             }
             "type_pattern" => {
@@ -706,7 +792,7 @@ fn walk_body<'tree>(root: Node<'tree>, source: &str, refs: &mut Vec<BodyRef>, lo
                     children.iter().find(|n| is_type_node(n.kind())),
                     children.iter().find(|n| n.kind() == "identifier"),
                 ) {
-                    locals.push(Local { name: text(*name, source).to_owned(), ty: type_use(*ty, source) });
+                    locals.push(Local { name: text(*name, source).to_owned(), ty: type_use(*ty, source), init: None });
                 }
             }
             kind if is_comment(kind) => continue,

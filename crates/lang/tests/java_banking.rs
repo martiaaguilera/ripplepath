@@ -129,8 +129,8 @@ fn resolves_calls_through_fields_locals_and_static_receivers() {
         ),
         Some(Evidence::ResolvedExact)
     );
-    // chained through a declared return type: `repo.findById("b").get().balance()` stops at
-    // Optional (external) — no edge to Account#balance may be invented.
+    // chained through a declared return type and `java.util.Optional<Account>.get()`: the element
+    // type comes from a table of JDK signatures, not from code we read, so it is inferred.
     assert_eq!(
         edge(
             &g,
@@ -138,7 +138,7 @@ fn resolves_calls_through_fields_locals_and_static_receivers() {
             "java:com.acme.bank.domain.Account#balance()",
             EdgeKind::Calls
         ),
-        None
+        Some(Evidence::StaticInferred)
     );
 }
 
@@ -216,7 +216,8 @@ fn comment_only_edit_keeps_fingerprint_but_body_edit_changes_it() {
 #[test]
 fn untyped_lambda_receivers_are_reported_as_unresolved_not_guessed() {
     let account = "package p;\npublic class Account { public void close() {} }\n";
-    let user = "package p;\nimport java.util.List;\nclass Closer {\n  void run(List<Account> all) {\n    all.forEach(a -> a.close());\n  }\n}\n";
+    // `Batch` is external and not a JDK container: nothing says what `a` is.
+    let user = "package p;\nimport com.lib.Batch;\nclass Closer {\n  void run(Batch<Account> all) {\n    all.forEach(a -> a.close());\n  }\n}\n";
     let files = [
         java::extract("p/Account.java", account, BUDGET).unwrap(),
         java::extract("p/Closer.java", user, BUDGET).unwrap(),
