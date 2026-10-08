@@ -12,6 +12,7 @@ import type {
   RiskReport,
   Severity,
 } from "../api/types";
+import { matchToken } from "../app/reportIndex";
 import { EVIDENCE_LABEL, shortLabel } from "../graph/model";
 
 /** `MIGRATION_CHANGED` → `Migration changed`. */
@@ -162,29 +163,28 @@ export function EvidenceText({
     <>
       {parts.map((part, index) => {
         const key = `${index}:${part}`;
-        const bare = part.replace(/^[([]+|[)\],;]+$/g, "");
-        const lead = part.slice(0, part.indexOf(bare));
-        const trail = part.slice(part.indexOf(bare) + bare.length);
-        if (bare && symbols.has(bare) && onSymbol) {
+        const symbol = onSymbol ? matchToken(part, (core) => symbols.has(core)) : null;
+        if (symbol && onSymbol) {
           return (
             <span key={key}>
-              {lead}
-              <button type="button" className="link sym" title={bare} onClick={() => onSymbol(bare)}>
-                {shortLabel(bare)}
+              {symbol.lead}
+              <button type="button" className="link sym" title={symbol.core} onClick={() => onSymbol(symbol.core)}>
+                {shortLabel(symbol.core)}
               </button>
-              {trail}
+              {symbol.trail}
             </span>
           );
         }
-        const { file, line } = fileAndLine(bare);
-        if (bare && files.has(file) && onFile) {
+        const located = onFile ? matchToken(part, (core) => files.has(fileAndLine(core).file)) : null;
+        if (located && onFile) {
+          const { file, line } = fileAndLine(located.core);
           return (
             <span key={key}>
-              {lead}
+              {located.lead}
               <button type="button" className="link loc" onClick={() => onFile(file, line)}>
-                {bare}
+                {located.core}
               </button>
-              {trail}
+              {located.trail}
             </span>
           );
         }

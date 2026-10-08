@@ -252,14 +252,12 @@ function ViewNav({
                 href={hrefFor(url, { view })}
                 aria-current={url.view === view ? "page" : undefined}
                 aria-keyshortcuts={String(index + 1)}
+                title={`${VIEW_LABEL[view]} (press ${index + 1})`}
                 className={`viewnav__link ${url.view === view ? "is-current" : ""}`}
                 onClick={onClick}
               >
                 {VIEW_LABEL[view]}
                 {counts[view] !== null && <span className="viewnav__count">{counts[view]}</span>}
-                <kbd className="viewnav__key" aria-hidden="true">
-                  {index + 1}
-                </kbd>
               </a>
             </li>
           );

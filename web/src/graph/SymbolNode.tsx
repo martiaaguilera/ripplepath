@@ -35,8 +35,8 @@ export function roleText(node: Pick<ViewNode, "role" | "change" | "is_test" | "d
   return node.depth === 1 ? "direct dependent" : `transitive · depth ${node.depth}`;
 }
 
-// Edges point dependent → dependency and flow right-to-left, so a node's outgoing handle is on its
-// left and its incoming handle on its right.
+// Edges point dependent → dependency and flow bottom-to-top (layout.ts), so a node's outgoing
+// handle is on its top edge and its incoming handle on its bottom edge.
 function SymbolNodeView({ data }: NodeProps<SymbolFlowNode>) {
   const { node } = data;
   const classes = [
@@ -49,7 +49,7 @@ function SymbolNodeView({ data }: NodeProps<SymbolFlowNode>) {
   ].join(" ");
   return (
     <div className={classes} title={node.id}>
-      <Handle type="source" position={Position.Left} className="node__handle" />
+      <Handle type="source" position={Position.Top} className="node__handle" />
       <span className="node__glyph" aria-hidden="true">
         {KIND_GLYPH[node.kind]}
       </span>
@@ -57,7 +57,7 @@ function SymbolNodeView({ data }: NodeProps<SymbolFlowNode>) {
         <span className="node__label">{node.label}</span>
         <span className="node__meta">{roleText(node)}</span>
       </span>
-      <Handle type="target" position={Position.Right} className="node__handle" />
+      <Handle type="target" position={Position.Bottom} className="node__handle" />
     </div>
   );
 }
@@ -84,7 +84,7 @@ function ClusterNodeView({ data }: NodeProps<ClusterFlowNode>) {
   ].filter(Boolean);
   return (
     <div className={classes} title={`${cluster.module} — click to expand`}>
-      <Handle type="source" position={Position.Left} className="node__handle" />
+      <Handle type="source" position={Position.Top} className="node__handle" />
       <span className="node__glyph node__glyph--cluster" aria-hidden="true">
         {cluster.members.length}
       </span>
@@ -92,7 +92,7 @@ function ClusterNodeView({ data }: NodeProps<ClusterFlowNode>) {
         <span className="node__label">{clusterLabel(cluster.module)}</span>
         <span className="node__meta">{details.join(" · ")}</span>
       </span>
-      <Handle type="target" position={Position.Right} className="node__handle" />
+      <Handle type="target" position={Position.Bottom} className="node__handle" />
     </div>
   );
 }

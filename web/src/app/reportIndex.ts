@@ -62,15 +62,33 @@ export function layersNamedFor(report: AnalysisReport, file: string): string[] {
 }
 
 /**
+ * Splits a whitespace-delimited token of engine prose into surrounding punctuation and a core that
+ * `accept` recognises. Symbol ids end in `)` themselves (`…#withdraw(Money)`), so punctuation is
+ * peeled one character at a time and the longest accepted core wins: stripping every trailing `)`
+ * up front would turn the id into something no report names.
+ */
+export function matchToken(
+  token: string,
+  accept: (core: string) => boolean,
+): { lead: string; core: string; trail: string } | null {
+  for (let start = 0; start < token.length; start += 1) {
+    if (start > 0 && !"([".includes(token.charAt(start - 1))) break;
+    for (let end = token.length; end > start; end -= 1) {
+      if (end < token.length && !")],;".includes(token.charAt(end))) break;
+      const core = token.slice(start, end);
+      if (accept(core)) return { lead: token.slice(0, start), core, trail: token.slice(end) };
+    }
+  }
+  return null;
+}
+
+/**
  * Risk signals with points whose evidence names one of `needles` (a symbol id, or a path, possibly
  * followed by `:line`). Whole-token comparison: `Account` must not match `Account#withdraw`.
  */
 export function signalsNaming(report: AnalysisReport, needles: readonly string[]): string[] {
   const wanted = needles.filter((n) => n.length > 0);
-  const names = (evidence: string) =>
-    evidence
-      .split(/\s+/)
-      .map((token) => token.replace(/^[([]+|[)\],;]+$/g, ""))
-      .some((token) => wanted.some((n) => token === n || token.startsWith(`${n}:`)));
+  const accept = (core: string) => wanted.some((n) => core === n || core.startsWith(`${n}:`));
+  const names = (evidence: string) => evidence.split(/\s+/).some((token) => matchToken(token, accept) !== null);
   return report.risk.signals.filter((s) => s.points > 0 && s.evidence.some(names)).map((s) => s.id);
 }

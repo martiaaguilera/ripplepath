@@ -1,6 +1,8 @@
-// Layered layout with ELK. Edges point from dependent to dependency, and ELK's `LEFT` direction
-// puts edge targets to the left, so the changed code sits on the left and its blast radius grows
-// to the right — the same direction the eye reads the explanation in.
+// Layered layout with ELK. Edges point from dependent to dependency, and ELK's `UP` direction puts
+// edge targets above their sources, so the changed code sits on top and its blast radius grows
+// downwards, one row per depth. Rows rather than columns: a blast radius is usually deeper than it
+// is wide per level, and a left-to-right layout of six levels had to be zoomed out until labels
+// were unreadable in the centre column.
 
 import type { ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api";
 import type { DisplayGraph } from "./clusters";
@@ -8,8 +10,8 @@ import type { ViewNode } from "./model";
 
 export const NODE_HEIGHT = 46;
 const MIN_WIDTH = 150;
-const MAX_WIDTH = 300;
-const CHAR_WIDTH = 7.2;
+const MAX_WIDTH = 220;
+const CHAR_WIDTH = 7;
 
 export function nodeWidth(node: Pick<ViewNode, "label">): number {
   return Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, node.label.length * CHAR_WIDTH + 36)));
@@ -39,9 +41,9 @@ function elk() {
 
 const LAYOUT_OPTIONS = {
   "elk.algorithm": "layered",
-  "elk.direction": "LEFT",
-  "elk.layered.spacing.nodeNodeBetweenLayers": "70",
-  "elk.spacing.nodeNode": "18",
+  "elk.direction": "UP",
+  "elk.layered.spacing.nodeNodeBetweenLayers": "56",
+  "elk.spacing.nodeNode": "16",
   "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
   "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
   "elk.hierarchyHandling": "INCLUDE_CHILDREN",

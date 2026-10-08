@@ -172,7 +172,7 @@ export function ImpactGraph({ graph, highlight, selection, groupByModule, onSele
         edges={edges}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.15 }}
+        fitViewOptions={{ padding: 0.06 }}
         minZoom={0.15}
         maxZoom={2}
         nodesConnectable={false}
