@@ -91,6 +91,28 @@ impl LoadedEvidence {
         })
     }
 
+    /// Coverage of code that exists only in base (a deleted symbol). Only reports measured at the
+    /// base commit describe it: a head-side report would call it NOT_COVERED merely because the
+    /// code is gone.
+    pub(crate) fn base_only_coverage_status(
+        &self,
+        symbol: &Symbol,
+        base_commit: Option<&str>,
+    ) -> Option<CoverageStatus> {
+        if !self.has_coverage() || !coverable(symbol.kind) {
+            return None;
+        }
+        let at_base: Vec<&StoredCoverage> =
+            self.coverage.iter().filter(|r| Some(r.commit.as_str()) == base_commit).collect();
+        Some(if at_base.iter().any(|r| r.covered.contains(symbol.id.as_str())) {
+            CoverageStatus::Covered
+        } else if at_base.iter().any(|r| r.files.contains(&symbol.file)) {
+            CoverageStatus::NotCovered
+        } else {
+            CoverageStatus::NoData
+        })
+    }
+
     pub(crate) fn history(&self, test: &SymbolId) -> Option<TestHistory> {
         self.history.get(test.as_str()).map(|entries| summarize(entries))
     }

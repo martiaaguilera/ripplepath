@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="5" failures="0" errors="0" time="0.0414078">
+    <testsuite name="src/cart.test.ts" timestamp="2026-10-08T13:24:39.899Z" hostname="redacted" tests="1" failures="0" errors="0" skipped="0" time="0.0115668">
+        <testcase classname="src/cart.test.ts" name="Cart &gt; totals line items" time="0.0068166">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/clock.test.ts" timestamp="2026-10-08T13:24:39.949Z" hostname="redacted" tests="1" failures="0" errors="0" skipped="0" time="0.0095741">
+        <testcase classname="src/clock.test.ts" name="applies a discount before the checkout deadline" time="0.0058915">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/money.test.ts" timestamp="2026-10-08T13:24:39.979Z" hostname="redacted" tests="1" failures="0" errors="0" skipped="0" time="0.0095057">
+        <testcase classname="src/money.test.ts" name="formats with two decimals" time="0.0057909">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/pricing/discount.test.ts" timestamp="2026-10-08T13:24:40.026Z" hostname="redacted" tests="2" failures="0" errors="0" skipped="0" time="0.0107612">
+        <testcase classname="src/pricing/discount.test.ts" name="applyDiscount &gt; takes 10% off with WELCOME10" time="0.0055834">
+        </testcase>
+        <testcase classname="src/pricing/discount.test.ts" name="applyDiscount &gt; leaves totals alone without a code" time="0.0006346">
+        </testcase>
+    </testsuite>
+</testsuites>

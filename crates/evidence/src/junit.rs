@@ -129,6 +129,37 @@ mod tests {
         assert_eq!((results[3].outcome, results[3].failed_attempts), (Outcome::Passed, 1));
     }
 
+    /// Excerpt of real Vitest 5.0.3 output (fixtures/typescript-checkout/evidence/v1/junit/run-1.xml):
+    /// `classname` is the test file, `name` the describe chain joined with " > ".
+    #[test]
+    fn reads_vitest_reports() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="5" failures="1" errors="0" time="0.0509029">
+    <testsuite name="src/cart.test.ts" timestamp="2026-10-08T13:24:35.419Z" hostname="redacted" tests="1" failures="0" errors="0" skipped="0" time="0.0119194">
+        <testcase classname="src/cart.test.ts" name="Cart &gt; totals line items" time="0.0073712">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/clock.test.ts" timestamp="2026-10-08T13:24:35.425Z" hostname="redacted" tests="1" failures="1" errors="0" skipped="0" time="0.0183348">
+        <testcase classname="src/clock.test.ts" name="applies a discount before the checkout deadline" time="0.0145434">
+            <failure message="expected 91.06748597396812 to be less than 65" type="AssertionError">
+AssertionError: expected 91.06748597396812 to be less than 65
+ ❯ src/clock.test.ts:12:30
+            </failure>
+        </testcase>
+    </testsuite>
+</testsuites>"#;
+        let results = parse_junit(xml).unwrap();
+        assert_eq!(
+            (results[0].classname.as_str(), results[0].name.as_str(), results[0].duration_ms),
+            ("src/cart.test.ts", "Cart > totals line items", 7)
+        );
+        assert_eq!(results[1].outcome, Outcome::Failed);
+        assert_eq!(
+            results[1].failure_fingerprint.as_deref(),
+            Some("AssertionError: expected 91.06748597396812 to be less than 65")
+        );
+    }
+
     #[test]
     fn hostile_input_is_refused() {
         assert!(parse_junit("<html/>").is_err());

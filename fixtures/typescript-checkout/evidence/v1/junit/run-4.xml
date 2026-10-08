@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<testsuites name="vitest tests" tests="5" failures="1" errors="0" time="0.0900052">
+    <testsuite name="src/cart.test.ts" timestamp="2026-10-08T13:24:56.868Z" hostname="redacted" tests="1" failures="0" errors="0" skipped="0" time="0.0488071">
+        <testcase classname="src/cart.test.ts" name="Cart &gt; totals line items" time="0.0275987">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/clock.test.ts" timestamp="2026-10-08T13:24:56.928Z" hostname="redacted" tests="1" failures="1" errors="0" skipped="0" time="0.0190091">
+        <testcase classname="src/clock.test.ts" name="applies a discount before the checkout deadline" time="0.0148696">
+            <failure message="expected 65.29282480507261 to be less than 65" type="AssertionError">
+AssertionError: expected 65.29282480507261 to be less than 65
+ ❯ src/clock.test.ts:12:30
+            </failure>
+        </testcase>
+    </testsuite>
+    <testsuite name="src/money.test.ts" timestamp="2026-10-08T13:24:57.027Z" hostname="redacted" tests="1" failures="0" errors="0" skipped="0" time="0.0112175">
+        <testcase classname="src/money.test.ts" name="formats with two decimals" time="0.0068645">
+        </testcase>
+    </testsuite>
+    <testsuite name="src/pricing/discount.test.ts" timestamp="2026-10-08T13:24:57.064Z" hostname="redacted" tests="2" failures="0" errors="0" skipped="0" time="0.0109715">
+        <testcase classname="src/pricing/discount.test.ts" name="applyDiscount &gt; takes 10% off with WELCOME10" time="0.0056172">
+        </testcase>
+        <testcase classname="src/pricing/discount.test.ts" name="applyDiscount &gt; leaves totals alone without a code" time="0.0006439">
+        </testcase>
+    </testsuite>
+</testsuites>

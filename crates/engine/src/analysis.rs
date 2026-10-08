@@ -117,11 +117,13 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
 
     let mut changed_symbols = classify_symbols(&base, &head, &path_changes);
     for changed in &mut changed_symbols {
-        changed.coverage = head
-            .graph
-            .symbol(&changed.id)
-            .or_else(|| base.graph.symbol(&changed.id))
-            .and_then(|s| evidence.coverage_status(s));
+        changed.coverage = match head.graph.symbol(&changed.id) {
+            Some(symbol) => evidence.coverage_status(symbol),
+            None => base
+                .graph
+                .symbol(&changed.id)
+                .and_then(|s| evidence.base_only_coverage_status(s, base.revision.commit.as_deref())),
+        };
     }
 
     let mut head_roots = Vec::new();
@@ -390,8 +392,8 @@ fn tier(reason: TestReason, path: &[ripplepath_graph::Hop]) -> EvidenceTier {
 /// Test units (methods, test cases) are recommended when they changed or have a static path to a
 /// change. Containers (a Java test class, a TS test file) are recommended when their own code
 /// changed, when shared code inside them (lifecycle hooks, fixtures, helpers) changed or is
-/// impacted — that code runs for every test they contain — or when they are impacted and none of
-/// their units is.
+/// impacted — that code runs for every test they contain — when measured coverage links them to
+/// the change, or when they are impacted and none of their units is.
 fn recommend_tests(
     head: &CodeGraph,
     changed: &[ChangedSymbol],
@@ -439,8 +441,12 @@ fn recommend_tests(
         let target = if symbol.is_test && symbol.kind.is_test_unit() {
             Some(symbol.id.clone())
         } else if symbol.is_test {
+            // Testwise coverage is recorded per container (a Java test class run, a TS test file
+            // run), so a coverage hop is only ever on the container. Dropping it because a unit
+            // is listed on static evidence would hide the strongest evidence there is.
             let has_listed_unit = listed_units.iter().any(|unit| container_of(unit).as_ref() == Some(&symbol.id));
-            (!has_listed_unit).then(|| symbol.id.clone())
+            let measured = symbol.path.iter().any(is_coverage_hop);
+            (!has_listed_unit || measured).then(|| symbol.id.clone())
         } else {
             container_of(&symbol.id)
         };
