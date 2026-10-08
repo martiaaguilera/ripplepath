@@ -21,13 +21,20 @@ Status: Java and TypeScript/JavaScript frontends. Planned components are marked 
 | `lang` | Language frontends `java` and `ts`, each `extract` (per file, pure) + `resolve` (per snapshot, pure). Languages resolve independently; no cross-language edges. | none |
 | `graph` | `CodeGraph` (sorted edges, adjacency indices) and `impact` (BFS with explaining paths). | none |
 | `storage` | SQLite: migrations, persistent fact cache, indexed graph updated by difference. | one DB file |
-| `engine` | Orchestration: snapshots, fact cache, change classification, hunks, uncertainty, report. | via `git` |
-| `cli` | `ripplepath analyze | serve | demo`. Text renderer neutralises terminal control characters. | stdout/files |
+| `engine` | Orchestration: snapshots, fact cache, change classification, hunks, uncertainty, report. Pure modules `config`, `architecture`, `owners`, `api_surface`, `risk`, `policy`; `assess` reads `ripplepath.yml` (base) and CODEOWNERS (head) through `git` and calls them. | via `git` |
+| `cli` | `ripplepath analyze | index | ingest | architecture check | serve | demo`. Text renderer neutralises terminal control characters. Exit 2 on policy failure with `--fail-on-policy`. | stdout/files |
 | `server` | Axum API `/api/v1/*` + static UI, Host validation, CSP, bounded analysis concurrency. | HTTP |
 | `web/` | React + TypeScript strict UI. Renders the report; never infers relationships. | HTTP |
 
-Planned: `tests` evidence ingestion
-(JaCoCo/LCOV/JUnit), `risk`, `mcp`.
+Planned: `mcp`.
+
+## Assessment stage
+
+After impact and test selection, `assess` evaluates the layer rules on **both** graphs with the base
+revision's configuration (ADR 0005), compares them, reads CODEOWNERS from head, derives API surface
+changes from the change classification, measures the risk signals and evaluates the policy gates.
+Every step but the two blob reads is a pure function with its own unit tests; ordering is by
+`BTreeMap`/sorted `Vec` throughout, so the new sections are byte-identical across runs.
 
 ## Two-phase language frontends
 
@@ -69,3 +76,7 @@ Tokio's blocking pool, at most 2 at a time; the permit is held inside the blocki
 | Graph slice nodes | 400 | `clamped: true`, UI notice |
 | Type nesting / receiver chains | 32 / 64 | treated as unresolvable |
 | Rename similarity pairs | 10 000 | `RENAME_DETECTION_SKIPPED` |
+| `ripplepath.yml` | 64 KiB, 64 layers, 256 rules, 1 024 patterns | config error, `config_invalid` gate fails |
+| CODEOWNERS | 3 MB (GitHub's limit) | ignored, reported in `owners.errors` |
+| Listed violations / coupling pairs / API changes / owner files | 500 / 100 / 500 / 500 | `*_truncated: true`, counts stay complete |
+| Evidence per risk signal / gate | 50 | `evidence_truncated` count |

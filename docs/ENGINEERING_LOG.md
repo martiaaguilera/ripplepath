@@ -2,6 +2,43 @@
 
 Meaningful discoveries only, newest first.
 
+## 2026-10-08 — Configuration, architecture delta, owners, risk model v1, policy
+
+**Whose rules apply is a security question.** If a pull request's own `ripplepath.yml` were used,
+the change could delete the rule it breaks. The configuration is read from the base revision's tree
+(object access only) and applied to both graphs; head's edits are validated and flagged. The test
+`configuration_comes_from_base_so_a_change_cannot_weaken_its_own_rules` fails if head's file is used.
+ADR 0005.
+
+**The same edge kind means different things to impact and to architecture.** IMPORTS does not
+propagate impact (session 2), but an import of another layer's type *is* an architecture
+dependency. The java-banking change shows both: `Account.java` imports `ApiErrors` (one violation on
+the file symbol) and `Account#withdraw` calls it (a second violation on the method).
+
+**One import closed a four-layer cycle.** The domain → api dependency is the only new edge, yet it
+creates a new cycle api → application → domain → api (persistence included). Two signals fire for
+one root cause; per-signal caps bound the effect and ADR 0006 records that signals are correlated.
+The fixture scores 99 (CRITICAL) — reported as measured, not tuned down.
+
+**A comment is not a critical change.** The first decomposition counted `Money.java` under
+`critical_path_changed` although its only edit was a comment: file-level change detection leaked
+into a symbol-level tool. Parsed source now counts only with a changed symbol; unparsed files
+(SQL migrations) always count.
+
+**Signature changes would have made violations flicker.** Violation identity is (from, to, kind),
+and a re-signed method has a new id; without mapping `previous_id → id` (and probable moves) a
+violation through it would be reported removed *and* new. The mapping reuses the change
+classification's identities rather than inventing similarity.
+
+**Config spelling vs. report spelling.** The report serialises `SelectionMode` as
+`FAST_FEEDBACK`; the config file says `fast_feedback`. Deriving the config parser from the report
+enum would have accepted only the shouting form; the config has its own enum.
+
+**CODEOWNERS is not gitignore.** GitHub documents that `docs/*` owns direct children only, while a
+gitignore `docs/*` would also cover nested files through the matched directory. The matcher is a
+single dynamic-programming pass over (pattern segment, path segment) that answers full-path and
+directory-prefix matches together, so matching costs O(pattern segments × path segments) even for a pathological `**/a*` pattern.
+
 ## 2026-10-07 — Session 3: persistent incremental index
 
 **Incremental facts, recomputed resolution.** Resolution depends on every file's imports, so the
