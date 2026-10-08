@@ -60,6 +60,9 @@ enum Command {
         #[arg(long = "allow-host")]
         allowed_hosts: Vec<String>,
     },
+    /// Architecture rules of one revision.
+    #[command(subcommand)]
+    Architecture(ArchitectureCommand),
     /// Build the bundled demo repository and analyse its change.
     Demo {
         /// Where to create the demo repository (must not exist yet).
@@ -68,6 +71,19 @@ enum Command {
         /// Which bundled fixture to build.
         #[arg(long, value_enum, default_value_t = DemoFixture::JavaBanking)]
         fixture: DemoFixture,
+        #[arg(long, value_enum, default_value_t = Format::Text)]
+        format: Format,
+    },
+}
+
+#[derive(Subcommand)]
+enum ArchitectureCommand {
+    /// Check one revision against its own ripplepath.yml layer rules (state, not delta).
+    Check {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long, default_value = "HEAD")]
+        rev: String,
         #[arg(long, value_enum, default_value_t = Format::Text)]
         format: Format,
     },
@@ -143,9 +159,13 @@ struct AnalyzeArgs {
     /// exists]. Must not live inside an untrusted repository.
     #[arg(long)]
     db: Option<PathBuf>,
-    /// Test selection policy.
-    #[arg(long, value_enum, default_value_t = ModeArg::Balanced)]
-    mode: ModeArg,
+    /// Test selection policy [default: `tests.mode` from the base revision's ripplepath.yml, else
+    /// balanced].
+    #[arg(long, value_enum)]
+    mode: Option<ModeArg>,
+    /// Exit with status 2 when the merge policy fails (the report is still written).
+    #[arg(long)]
+    fail_on_policy: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -169,11 +189,20 @@ enum Format {
     Json,
 }
 
+/// Exit statuses: 0 success, 1 error, 2 merge policy failed (`analyze --fail-on-policy`).
+const EXIT_POLICY_FAILED: u8 = 2;
+
+enum Outcome {
+    Done,
+    PolicyFailed,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     init_tracing(cli.verbose);
     match run(cli.command) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(Outcome::Done) => ExitCode::SUCCESS,
+        Ok(Outcome::PolicyFailed) => ExitCode::from(EXIT_POLICY_FAILED),
         Err(message) => {
             // Errors can quote repository content (paths, revisions, stored values).
             eprintln!("error: {}", text::neutralize_terminal_controls(&message));
@@ -197,23 +226,55 @@ fn init_tracing(verbose: u8) {
         .init();
 }
 
-fn run(command: Command) -> Result<(), String> {
+fn run(command: Command) -> Result<Outcome, String> {
     match command {
         Command::Analyze(args) => {
-            let mut options = AnalyzeOptions::new(&args.repo, &args.base, &args.head);
-            options.impact = ImpactOptions { max_depth: args.max_depth, ..ImpactOptions::default() };
-            options.db = match args.db {
-                Some(db) => Some(db),
-                None => default_db(&args.repo).ok().filter(|db| db.is_file()),
-            };
-            options.mode = match args.mode {
-                ModeArg::Conservative => ripplepath_engine::SelectionMode::Conservative,
-                ModeArg::Balanced => ripplepath_engine::SelectionMode::Balanced,
-                ModeArg::FastFeedback => ripplepath_engine::SelectionMode::FastFeedback,
-            };
-            let report = analyze(&options).map_err(|e| e.to_string())?;
-            emit(&report, args.format, args.output.as_deref())
+            let fail_on_policy = args.fail_on_policy;
+            let report = run_analyze(args)?;
+            Ok(if fail_on_policy && report.policy.result == ripplepath_engine::policy::PolicyResult::Fail {
+                Outcome::PolicyFailed
+            } else {
+                Outcome::Done
+            })
         }
+        Command::Architecture(ArchitectureCommand::Check { repo, rev, format }) => {
+            let check = ripplepath_engine::check_architecture(&repo, &rev, &ripplepath_engine::Limits::default())
+                .map_err(|e| e.to_string())?;
+            let rendered = match format {
+                Format::Json => {
+                    let mut json = serde_json::to_string_pretty(&check).map_err(|e| e.to_string())?;
+                    json.push('\n');
+                    json
+                }
+                Format::Text => text::render_architecture_check(&check),
+            };
+            write_stdout(&rendered)?;
+            Ok(Outcome::Done)
+        }
+        other => run_other(other).map(|()| Outcome::Done),
+    }
+}
+
+fn run_analyze(args: AnalyzeArgs) -> Result<AnalysisReport, String> {
+    let mut options = AnalyzeOptions::new(&args.repo, &args.base, &args.head);
+    options.impact = ImpactOptions { max_depth: args.max_depth, ..ImpactOptions::default() };
+    options.db = match args.db {
+        Some(db) => Some(db),
+        None => default_db(&args.repo).ok().filter(|db| db.is_file()),
+    };
+    options.mode = args.mode.map(|mode| match mode {
+        ModeArg::Conservative => ripplepath_engine::SelectionMode::Conservative,
+        ModeArg::Balanced => ripplepath_engine::SelectionMode::Balanced,
+        ModeArg::FastFeedback => ripplepath_engine::SelectionMode::FastFeedback,
+    });
+    let report = analyze(&options).map_err(|e| e.to_string())?;
+    emit(&report, args.format, args.output.as_deref())?;
+    Ok(report)
+}
+
+fn run_other(command: Command) -> Result<(), String> {
+    match command {
+        Command::Analyze(_) | Command::Architecture(_) => Ok(()),
         Command::Index { repo, rev, db, format } => {
             let db = match db {
                 Some(db) => db,
@@ -424,13 +485,15 @@ fn emit(report: &AnalysisReport, format: Format, output: Option<&Path>) -> Resul
     };
     match output {
         Some(path) => std::fs::write(path, rendered).map_err(|e| format!("cannot write {}: {e}", path.display())),
-        None => {
-            let mut stdout = std::io::stdout().lock();
-            // A closed pipe (`ripplepath ... | head`) is not an error worth reporting.
-            match stdout.write_all(rendered.as_bytes()) {
-                Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e.to_string()),
-                _ => Ok(()),
-            }
-        }
+        None => write_stdout(&rendered),
+    }
+}
+
+fn write_stdout(rendered: &str) -> Result<(), String> {
+    let mut stdout = std::io::stdout().lock();
+    // A closed pipe (`ripplepath ... | head`) is not an error worth reporting.
+    match stdout.write_all(rendered.as_bytes()) {
+        Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e.to_string()),
+        _ => Ok(()),
     }
 }
