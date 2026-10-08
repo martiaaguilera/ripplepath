@@ -179,6 +179,209 @@ export interface AnalysisReport {
   tests: TestRecommendation[];
   uncertainty: Uncertainty[];
   graph: GraphSlice;
+  config: ConfigReport;
+  architecture: ArchitectureReport;
+  owners: OwnersReport;
+  api_surface: ApiSurfaceReport;
+  risk: RiskReport;
+  policy: PolicyReport;
+}
+
+// ---- Configuration (ripplepath.yml, always read from the base revision) ----
+
+export type Gate =
+  | "new_architecture_violation"
+  | "architecture_violation"
+  | "new_cycle"
+  | "parse_failure_in_changed_file"
+  | "removed_test_on_critical_path"
+  | "breaking_api_change"
+  | "config_changed"
+  | "config_invalid";
+
+export type SelectionMode = "CONSERVATIVE" | "BALANCED" | "FAST_FEEDBACK";
+
+export interface ConfigReport {
+  path: string;
+  source: "DEFAULTS" | "BASE_REVISION" | "INVALID_USING_DEFAULTS";
+  revision: string;
+  blob: string | null;
+  head_change: "ABSENT" | "UNCHANGED" | "ADDED" | "MODIFIED" | "REMOVED";
+  errors: string[];
+  head_errors: string[];
+  critical: string[];
+  generated: string[];
+  tests_mode: SelectionMode | null;
+  fail_on: Gate[];
+  warn_on: Gate[];
+}
+
+// ---- Architecture ----
+
+export type DeltaStatus = "NEW" | "PRE_EXISTING" | "REMOVED";
+
+export interface RuleReport {
+  index: number;
+  from: string;
+  kind: "DENY" | "ALLOW";
+  layers: string[];
+  description: string;
+}
+
+export interface LayerReport {
+  name: string;
+  patterns: string[];
+  base_symbols: number;
+  head_symbols: number;
+}
+
+export interface Violation {
+  status: DeltaStatus;
+  rule: number;
+  description: string;
+  from_layer: string;
+  to_layer: string;
+  edge: Edge;
+  base_edge: Edge | null;
+}
+
+export interface LayerEdgeEvidence {
+  from: string;
+  to: string;
+  edges: number;
+  example: Edge;
+}
+
+export interface LayerCycle {
+  status: DeltaStatus;
+  layers: string[];
+  edges: LayerEdgeEvidence[];
+}
+
+export interface LayerDependency {
+  from: string;
+  to: string;
+  base_edges: number;
+  head_edges: number;
+  direction_reversed: boolean;
+}
+
+export interface ModuleCoupling {
+  from: string;
+  to: string;
+  base_edges: number;
+  head_edges: number;
+}
+
+export interface ArchitectureReport {
+  configured: boolean;
+  cycles_mode: "off" | "warn" | "forbid";
+  rules: RuleReport[];
+  layers: LayerReport[];
+  summary: {
+    new_violations: number;
+    new_violations_exact: number;
+    pre_existing_violations: number;
+    removed_violations: number;
+    new_cycles: number;
+    pre_existing_cycles: number;
+    removed_cycles: number;
+  };
+  violations: Violation[];
+  violations_truncated: boolean;
+  cycles: LayerCycle[];
+  layer_dependencies: LayerDependency[];
+  module_coupling: ModuleCoupling[];
+  module_coupling_truncated: boolean;
+}
+
+// ---- Owners (CODEOWNERS from head; metadata, not authorization) ----
+
+export interface OwnersReport {
+  source: string | null;
+  changed_in_head: boolean;
+  files: { path: string; role: "changed" | "impacted"; owners: string[]; line: number | null }[];
+  files_truncated: boolean;
+  owners: { owner: string; changed_files: number; impacted_files: number }[];
+  unowned_changed_files: number;
+  errors: { line: number; message: string }[];
+  note: string;
+}
+
+// ---- Public API surface ----
+
+export interface ApiChange {
+  kind: "REMOVED" | "SIGNATURE_CHANGED" | "NARROWED" | "ADDED";
+  id: string;
+  previous_id: string | null;
+  symbol_kind: SymbolKind;
+  language: "java" | "typescript" | "javascript";
+  file: string;
+  line: number;
+}
+
+export interface ApiSurfaceReport {
+  breaking: number;
+  added: number;
+  changes: ApiChange[];
+  truncated: boolean;
+}
+
+// ---- Risk model (a decomposition, NOT a probability of failure) ----
+
+export type SignalId =
+  | "public_api_changed"
+  | "migration_changed"
+  | "build_or_dependency_changed"
+  | "blast_radius"
+  | "changed_symbol_centrality"
+  | "critical_path_changed"
+  | "new_architecture_violation"
+  | "new_layer_cycle"
+  | "changed_code_without_coverage"
+  | "flaky_impacted_tests"
+  | "deleted_tests"
+  | "parser_uncertainty"
+  | "unresolved_references_in_changed_code"
+  | "config_changed";
+
+export interface RiskSignal {
+  id: SignalId;
+  definition: string;
+  evaluated: boolean;
+  value: number;
+  units: number;
+  weight: number;
+  cap: number;
+  points: number;
+  evidence: string[];
+  evidence_truncated: number;
+  note: string | null;
+}
+
+export interface RiskReport {
+  model_version: number;
+  score: number;
+  uncapped_total: number;
+  level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  interpretation: string;
+  signals: RiskSignal[];
+}
+
+// ---- Merge policy ----
+
+export interface GateResult {
+  gate: Gate;
+  level: "OFF" | "WARN" | "FAIL";
+  status: "PASS" | "WARN" | "FAIL" | "OFF" | "NOT_EVALUATED";
+  detail: string;
+  evidence: string[];
+}
+
+export interface PolicyReport {
+  result: "PASS" | "WARN" | "FAIL";
+  gates: GateResult[];
+  note: string;
 }
 
 export interface Health {
