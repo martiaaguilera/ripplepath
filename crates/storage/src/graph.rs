@@ -64,7 +64,10 @@ fn text<T: serde::Serialize>(value: &T) -> String {
 }
 
 fn parse<T: serde::de::DeserializeOwned>(column: &'static str, raw: String) -> Result<T, StorageError> {
-    serde_json::from_value(Value::String(raw.clone())).map_err(|_| corrupt(column, &raw))
+    // Deserialize straight from the borrowed text: going through a `serde_json::Value` cost an
+    // allocation and a clone per enum column, which dominated loading a large graph.
+    let deserializer = serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&raw);
+    T::deserialize(deserializer).map_err(|_| corrupt(column, &raw))
 }
 
 /// Error for an unreadable stored value. The value is escaped and truncated: it came from a file on
@@ -74,7 +77,7 @@ pub(crate) fn corrupt(column: &'static str, raw: &str) -> StorageError {
     StorageError::Corrupt { column, value }
 }
 
-type EdgeKey = (SymbolId, SymbolId, EdgeKind);
+type EdgeKey<'a> = (&'a SymbolId, &'a SymbolId, EdgeKind);
 
 impl Store {
     pub fn load_graph(&self) -> Result<Option<IndexedGraph>, StorageError> {
@@ -194,17 +197,17 @@ impl Store {
                 Some(new) if new == old => {}
                 Some(_) => {}
                 None => {
-                    tx.execute("DELETE FROM indexed_files WHERE path = ?1", params![path])?;
+                    tx.prepare_cached("DELETE FROM indexed_files WHERE path = ?1")?.execute(params![path])?;
                     delta.files_changed += 1;
                 }
             }
         }
         for (path, new) in &new_files {
             if old_files.get(path) != Some(new) {
-                tx.execute(
+                tx.prepare_cached(
                     "INSERT OR REPLACE INTO indexed_files (path, blob, language, status) VALUES (?1, ?2, ?3, ?4)",
-                    params![path, new.blob, new.language.as_ref().map(text), new.status],
-                )?;
+                )?
+                .execute(params![path, new.blob, new.language.as_ref().map(text), new.status])?;
                 delta.files_changed += 1;
             }
         }
@@ -212,7 +215,7 @@ impl Store {
         let old_symbols: BTreeMap<&SymbolId, &Symbol> = previous.symbols.iter().map(|s| (&s.id, s)).collect();
         let new_symbols: BTreeMap<&SymbolId, &Symbol> = next.symbols.iter().map(|s| (&s.id, s)).collect();
         for id in old_symbols.keys().filter(|id| !new_symbols.contains_key(*id)) {
-            tx.execute("DELETE FROM symbols WHERE id = ?1", params![id.as_str()])?;
+            tx.prepare_cached("DELETE FROM symbols WHERE id = ?1")?.execute(params![id.as_str()])?;
             delta.symbols_removed += 1;
         }
         for (id, symbol) in &new_symbols {
@@ -224,14 +227,14 @@ impl Store {
             write_symbol(&tx, symbol)?;
         }
 
-        let key = |e: &Edge| -> EdgeKey { (e.from.clone(), e.to.clone(), e.kind) };
-        let old_edges: BTreeMap<EdgeKey, &Edge> = previous.edges.iter().map(|e| (key(e), e)).collect();
-        let new_edges: BTreeMap<EdgeKey, &Edge> = next.edges.iter().map(|e| (key(e), e)).collect();
+        fn key(e: &Edge) -> EdgeKey<'_> {
+            (&e.from, &e.to, e.kind)
+        }
+        let old_edges: BTreeMap<EdgeKey<'_>, &Edge> = previous.edges.iter().map(|e| (key(e), e)).collect();
+        let new_edges: BTreeMap<EdgeKey<'_>, &Edge> = next.edges.iter().map(|e| (key(e), e)).collect();
         for (from, to, kind) in old_edges.keys().filter(|k| !new_edges.contains_key(*k)) {
-            tx.execute(
-                "DELETE FROM edges WHERE from_id = ?1 AND to_id = ?2 AND kind = ?3",
-                params![from.as_str(), to.as_str(), text(kind)],
-            )?;
+            tx.prepare_cached("DELETE FROM edges WHERE from_id = ?1 AND to_id = ?2 AND kind = ?3")?
+                .execute(params![from.as_str(), to.as_str(), text(kind)])?;
             delta.edges_removed += 1;
         }
         for (k, edge) in &new_edges {
@@ -240,26 +243,30 @@ impl Store {
                 Some(_) => delta.edges_updated += 1,
                 None => delta.edges_added += 1,
             }
-            tx.execute(
+            tx.prepare_cached(
                 "INSERT OR REPLACE INTO edges (from_id, to_id, kind, evidence, file, line, rule) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![edge.from.as_str(), edge.to.as_str(), text(&edge.kind), text(&edge.evidence), edge.file, edge.line, edge.rule],
-            )?;
+            )?
+            .execute(params![
+                edge.from.as_str(),
+                edge.to.as_str(),
+                text(&edge.kind),
+                text(&edge.evidence),
+                edge.file,
+                edge.line,
+                edge.rule
+            ])?;
         }
 
         let old_unresolved: BTreeSet<_> = previous.unresolved.iter().collect();
         let new_unresolved: BTreeSet<_> = next.unresolved.iter().collect();
         for (from, file, line, detail) in old_unresolved.difference(&new_unresolved) {
-            tx.execute(
-                "DELETE FROM unresolved WHERE from_id = ?1 AND file = ?2 AND line = ?3 AND detail = ?4",
-                params![from.as_str(), file, line, detail],
-            )?;
+            tx.prepare_cached("DELETE FROM unresolved WHERE from_id = ?1 AND file = ?2 AND line = ?3 AND detail = ?4")?
+                .execute(params![from.as_str(), file, line, detail])?;
             delta.unresolved_removed += 1;
         }
         for (from, file, line, detail) in new_unresolved.difference(&old_unresolved) {
-            tx.execute(
-                "INSERT INTO unresolved (from_id, file, line, detail) VALUES (?1, ?2, ?3, ?4)",
-                params![from.as_str(), file, line, detail],
-            )?;
+            tx.prepare_cached("INSERT INTO unresolved (from_id, file, line, detail) VALUES (?1, ?2, ?3, ?4)")?
+                .execute(params![from.as_str(), file, line, detail])?;
             delta.unresolved_added += 1;
         }
 
@@ -273,10 +280,13 @@ impl Store {
 }
 
 fn write_symbol(tx: &Transaction<'_>, s: &Symbol) -> Result<(), StorageError> {
-    tx.execute(
+    // Cached: a cold index writes one row per symbol, and re-preparing the statement per row was
+    // a measurable share of `apply_graph` (docs/ENGINEERING_LOG.md, performance).
+    tx.prepare_cached(
         "INSERT OR REPLACE INTO symbols (id, kind, name, language, module, file, start_line, end_line, parent, visibility, is_test, fingerprint)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![
+    )?
+    .execute(params![
             s.id.as_str(),
             text(&s.kind),
             s.name,
@@ -289,8 +299,7 @@ fn write_symbol(tx: &Transaction<'_>, s: &Symbol) -> Result<(), StorageError> {
             text(&s.visibility),
             s.is_test,
             s.fingerprint.to_string(),
-        ],
-    )?;
+        ])?;
     Ok(())
 }
 
