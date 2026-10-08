@@ -33,6 +33,18 @@ pub struct AnalysisReport {
     pub evidence: EvidenceSummary,
     /// Bounded subgraph for visualisation: changed + impacted symbols and the edges among them.
     pub graph: GraphSlice,
+    /// Which `ripplepath.yml` was applied: always the base revision's (or defaults).
+    pub config: crate::assess::ConfigReport,
+    /// Layer rules and cycles compared base → head, and module coupling changes.
+    pub architecture: crate::architecture::ArchitectureReport,
+    /// Likely reviewers from CODEOWNERS (metadata, not authorization).
+    pub owners: crate::owners::OwnersReport,
+    /// Public API removed, narrowed, re-signed or added.
+    pub api_surface: crate::api_surface::ApiSurfaceReport,
+    /// Versioned decomposition of review-relevant signals. Not a probability of failure.
+    pub risk: crate::risk::RiskReport,
+    /// Merge-policy gates and their verdict.
+    pub policy: crate::policy::PolicyReport,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

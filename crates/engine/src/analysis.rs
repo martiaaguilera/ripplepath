@@ -27,6 +27,8 @@ pub enum AnalysisError {
     Evidence(#[from] ripplepath_evidence::EvidenceError),
     #[error("no test matches '{0}'; pass a symbol id, a test file path or a Java test class name")]
     UnknownTest(String),
+    #[error(transparent)]
+    Config(#[from] crate::config::ConfigError),
 }
 
 #[derive(Clone, Debug)]
@@ -43,7 +45,8 @@ pub struct AnalyzeOptions {
     /// Persistent fact cache and test evidence (coverage, CI history). Without it the analysis uses
     /// static evidence only.
     pub db: Option<PathBuf>,
-    pub mode: SelectionMode,
+    /// Test selection mode; `None` uses `tests.mode` from the configuration, else balanced.
+    pub mode: Option<SelectionMode>,
 }
 
 impl AnalyzeOptions {
@@ -57,7 +60,7 @@ impl AnalyzeOptions {
             graph_node_cap: 400,
             unresolved_cap: 200,
             db: None,
-            mode: SelectionMode::Balanced,
+            mode: None,
         }
     }
 }
@@ -75,6 +78,8 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
     let base = build_snapshot(&repo, base_rev, &mut cache, &options.limits)?;
     let mut head = build_snapshot(&repo, head_rev, &mut cache, &options.limits)?;
     let indexed_at = started.elapsed();
+    let config = crate::assess::load_config(&repo, &base, &head)?;
+    let mode = options.mode.or(config.config.tests_mode).unwrap_or(SelectionMode::Balanced);
 
     let mut evidence = match cache.store_mut() {
         Some(store) => LoadedEvidence::load(store)?,
@@ -211,14 +216,23 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
         all_units.iter().filter(|(unit, _)| is_within(&head.graph, unit, id)).cloned().collect()
     };
     let reasons = fallback_reasons(&files, &uncertainty, &changed_symbols, &tests, &evidence);
-    let test_selection = select(SelectionInput {
-        mode: options.mode,
-        tests: &tests,
-        reasons,
-        all_units: all_units.clone(),
-        units_of: &units_of,
-    });
+    let test_selection =
+        select(SelectionInput { mode, tests: &tests, reasons, all_units: all_units.clone(), units_of: &units_of });
     let tests_selected = test_selection.selected_units;
+
+    let assessment = crate::assess::assess(&crate::assess::AssessInput {
+        repo: &repo,
+        base: &base,
+        head: &head,
+        config: &config,
+        files: &files,
+        changed: &changed_symbols,
+        impacted: &impacted_symbols,
+        tests: &tests,
+        uncertainty: &uncertainty,
+        coverage_available: evidence.has_coverage(),
+        max_depth: options.impact.max_depth,
+    })?;
 
     let modules: BTreeSet<&str> = changed_symbols
         .iter()
@@ -264,6 +278,12 @@ pub fn analyze(options: &AnalyzeOptions) -> Result<AnalysisReport, AnalysisError
         test_selection,
         evidence: evidence.summary,
         graph,
+        config: config.report,
+        architecture: assessment.architecture,
+        owners: assessment.owners,
+        api_surface: assessment.api_surface,
+        risk: assessment.risk,
+        policy: assessment.policy,
     })
 }
 

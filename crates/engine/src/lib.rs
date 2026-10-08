@@ -1,19 +1,27 @@
 //! The analysis pipeline. Thin orchestration over the pure crates; all I/O happens here.
 
 mod analysis;
+pub mod api_surface;
+pub mod architecture;
+mod assess;
 mod changes;
+pub mod config;
 mod evidence;
 pub mod fixture;
 mod history;
 mod index;
 mod limits;
+pub mod owners;
+pub mod policy;
 mod report;
+pub mod risk;
 mod selection;
 mod signals;
 mod snapshot;
 mod test_evidence;
 
 pub use analysis::{AnalysisError, AnalyzeOptions, analyze};
+pub use assess::{ArchitectureCheck, ConfigChange, ConfigReport, ConfigSource, check_architecture};
 pub use evidence::{CoverageFormat, CoverageInput, IngestOutcome, ingest_coverage, ingest_junit};
 pub use index::{IndexOutcome, index_revision, indexed_graph};
 pub use limits::Limits;
