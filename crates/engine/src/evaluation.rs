@@ -27,6 +27,8 @@ pub const SMALL_SAMPLE_LABEL: &str = "small sample — not statistically meaning
 pub const MAX_CASES: usize = 10_000;
 pub const MAX_JUNIT_FILES_PER_CASE: usize = 1_000;
 const MAX_CASES_FILE_BYTES: u64 = 4 * 1024 * 1024;
+/// All JUnit files of all cases together.
+pub const MAX_TOTAL_JUNIT_BYTES: u64 = 512 * 1024 * 1024;
 /// Ancestor walks beyond this are refused, not truncated: a partial set would silently hide
 /// evidence that legitimately existed before a change.
 const MAX_ANCESTORS: usize = 1_000_000;
@@ -117,6 +119,8 @@ pub fn load_cases(path: &Path) -> Result<Vec<EvaluationCase>, EvaluationError> {
         return Err(EvaluationError::TooManyCases { count: file.cases.len(), limit: MAX_CASES });
     }
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    // Every case's results are held in memory at once, so the per-file bound alone is not enough.
+    let mut total_bytes = 0u64;
     file.cases
         .into_iter()
         .map(|entry| {
@@ -134,6 +138,14 @@ pub fn load_cases(path: &Path) -> Result<Vec<EvaluationCase>, EvaluationError> {
                 .map(|relative| {
                     let file = dir.join(relative);
                     let text = read_bounded(&file, crate::MAX_EVIDENCE_BYTES as u64)?;
+                    total_bytes += text.len() as u64;
+                    if total_bytes > MAX_TOTAL_JUNIT_BYTES {
+                        return Err(EvaluationError::TooLarge {
+                            path: file,
+                            size: total_bytes,
+                            limit: MAX_TOTAL_JUNIT_BYTES,
+                        });
+                    }
                     Ok(JunitInput { source: relative.to_string_lossy().replace('\\', "/"), text })
                 })
                 .collect::<Result<_, EvaluationError>>()?;

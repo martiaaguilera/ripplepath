@@ -93,6 +93,9 @@ fn run(s: &Setup, db: &Path, cases: &[EvaluationCase], modes: &[SelectionMode]) 
     evaluate(&options, cases).unwrap()
 }
 
+/// (case, selected, total, failed, caught, position of the first failing test)
+type Expected = (&'static str, usize, usize, usize, usize, Option<usize>);
+
 const ALL_MODES: [SelectionMode; 3] =
     [SelectionMode::Conservative, SelectionMode::Balanced, SelectionMode::FastFeedback];
 
@@ -120,8 +123,7 @@ fn replay_of_the_real_history_scores_what_was_measured() {
         assert_eq!((aggregate.time_to_first_failure_cases, aggregate.mean_time_to_first_failure_ms), (4, Some(14.0)));
     }
 
-    // (case, selected, total, failed, caught, position of the first failing test)
-    let expected: [(&str, usize, usize, usize, usize, Option<usize>); 11] = [
+    let expected: [Expected; 11] = [
         ("v1..v2", 7, 17, 0, 0, None),
         ("v2..v3", 12, 17, 3, 3, Some(3)),
         ("v3..v4", 15, 20, 0, 0, None),

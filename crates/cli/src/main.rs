@@ -567,7 +567,7 @@ fn emit(report: &AnalysisReport, format: Format, output: Option<&Path>) -> Resul
 fn write_output(rendered: &str, output: Option<&Path>) -> Result<(), String> {
     match output {
         Some(path) => std::fs::write(path, rendered).map_err(|e| format!("cannot write {}: {e}", path.display())),
-        None => write_stdout(&rendered),
+        None => write_stdout(rendered),
     }
 }
 
