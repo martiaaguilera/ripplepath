@@ -72,9 +72,13 @@ fn recommends_affected_tests_and_skips_unrelated_ones() {
     assert_eq!(cart.reason, TestReason::StaticPath);
     assert!(cart.path.iter().any(|hop| hop.via_dispatch), "explained through interface dispatch");
 
+    // The flakiness fixture calls applyDiscount directly.
+    let clock = test("ts:src/clock.test.ts#test:applies a discount before the checkout deadline").unwrap();
+    assert_eq!((clock.reason, clock.depth), (TestReason::StaticPath, 1));
+
     assert!(test("ts:src/money.test.ts#test:formats with two decimals").is_none(), "money did not change");
-    assert_eq!(report.summary.tests_total, 5);
-    assert_eq!(report.summary.tests_recommended, 4);
+    assert_eq!(report.summary.tests_total, 6);
+    assert_eq!(report.summary.tests_recommended, 5);
     // A new `describe` block is not a change to the other tests in the file.
     assert!(test("file:src/pricing/discount.test.ts").is_none());
     assert!(

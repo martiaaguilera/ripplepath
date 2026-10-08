@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="JUnit Jupiter" tests="3" skipped="0" failures="0" errors="0" time="0.642" hostname="redacted" timestamp="2026-10-08T15:18:25">
+<testcase name="returnsOkOnSuccessfulTransfer()" classname="com.acme.bank.api.TransferControllerTest" time="0.018">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.bank.api.TransferControllerTest]/[method:returnsOkOnSuccessfulTransfer()]
+display-name: JUnit Jupiter > TransferControllerTest > returnsOkOnSuccessfulTransfer()
+]]></system-out>
+</testcase>
+<testcase name="movesMoneyAndChargesFee()" classname="com.acme.bank.application.TransferServiceTest" time="0.262">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.bank.application.TransferServiceTest]/[method:movesMoneyAndChargesFee()]
+display-name: JUnit Jupiter > TransferServiceTest > movesMoneyAndChargesFee()
+]]></system-out>
+</testcase>
+<testcase name="subtractingMoreThanBalanceIsNegative()" classname="com.acme.bank.domain.MoneyTest" time="0.042">
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]/[class:com.acme.bank.domain.MoneyTest]/[method:subtractingMoreThanBalanceIsNegative()]
+display-name: JUnit Jupiter > MoneyTest > subtractingMoreThanBalanceIsNegative()
+]]></system-out>
+</testcase>
+<system-out><![CDATA[
+unique-id: [engine:junit-jupiter]
+display-name: JUnit Jupiter
+]]></system-out>
+</testsuite>
