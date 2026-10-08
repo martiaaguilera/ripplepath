@@ -60,9 +60,14 @@ pub fn system_load() -> Option<String> {
         let avg = std::fs::read_to_string("/proc/loadavg").ok()?;
         Some(format!("loadavg {}", avg.split_whitespace().take(3).collect::<Vec<_>>().join(" ")))
     } else if cfg!(windows) {
-        let out =
-            powershell("(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average")?;
-        Some(format!("cpu load {}%", out.trim()))
+        // A single load sample says little on a shared machine; the number of compiler processes
+        // running next to the benchmark says what the load was.
+        let out = powershell(
+            "$l = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; \
+             $c = @(Get-Process rustc,cargo -ErrorAction SilentlyContinue).Count; \"$l|$c\"",
+        )?;
+        let (load, compilers) = out.trim().split_once('|')?;
+        Some(format!("cpu load {load}%, {compilers} rustc/cargo processes"))
     } else {
         None
     }

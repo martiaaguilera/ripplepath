@@ -535,6 +535,8 @@ struct Workload {
     samples: Vec<Value>,
     /// One extra, unmeasured-for-the-headline run with per-stage timings, for attribution.
     phases: Option<Value>,
+    /// Machine load sampled when the workload finished (see `host::system_load`).
+    load_end: Option<String>,
 }
 
 /// Fields that must not vary between iterations of one workload: they are what the run computed,
@@ -653,7 +655,13 @@ fn suite(args: &SuiteArgs) -> Result<()> {
         remove_db(&db)?;
     }
     let phases = Some(phase_run(&repo_arg, &dataset.full_rev, None, &dbs)?);
-    workloads.push(Workload { kind: "index", scenario: "cold (empty database)".into(), samples, phases });
+    workloads.push(Workload {
+        kind: "index",
+        scenario: "cold (empty database)".into(),
+        samples,
+        phases,
+        load_end: system_load(),
+    });
 
     // Warm, unchanged revision: everything comes from the cache, nothing is written.
     let warm_db = dbs.join("warm.db");
@@ -670,7 +678,13 @@ fn suite(args: &SuiteArgs) -> Result<()> {
         )?);
     }
     let phases = Some(phase_run(&repo_arg, &dataset.full_rev, Some(&warm_db), &dbs)?);
-    workloads.push(Workload { kind: "index", scenario: "warm, unchanged revision".into(), samples, phases });
+    workloads.push(Workload {
+        kind: "index",
+        scenario: "warm, unchanged revision".into(),
+        samples,
+        phases,
+        load_end: system_load(),
+    });
 
     for (label, base, head) in &dataset.scenarios {
         // The database as it was after indexing `base`; each iteration starts from a copy.
@@ -691,7 +705,13 @@ fn suite(args: &SuiteArgs) -> Result<()> {
             )?);
         }
         let phases = Some(phase_run(&repo_arg, head, Some(&template), &dbs)?);
-        workloads.push(Workload { kind: "index", scenario: format!("update: {label}"), samples, phases });
+        workloads.push(Workload {
+            kind: "index",
+            scenario: format!("update: {label}"),
+            samples,
+            phases,
+            load_end: system_load(),
+        });
     }
 
     for (label, base, head) in &dataset.scenarios {
@@ -702,7 +722,13 @@ fn suite(args: &SuiteArgs) -> Result<()> {
                 &[&["measure", "analyze", "--repo", &repo_arg, "--base", base, "--head", head], memory_flag].concat(),
             )?);
         }
-        workloads.push(Workload { kind: "analyze", scenario: format!("{label}, no database"), samples, phases: None });
+        workloads.push(Workload {
+            kind: "analyze",
+            scenario: format!("{label}, no database"),
+            samples,
+            phases: None,
+            load_end: system_load(),
+        });
 
         let db = dbs.join("analyze.db");
         copy_db(&full_db, &db)?;
@@ -736,6 +762,7 @@ fn suite(args: &SuiteArgs) -> Result<()> {
             scenario: format!("{label}, warm database"),
             samples,
             phases: None,
+            load_end: system_load(),
         });
     }
 
@@ -751,6 +778,7 @@ fn suite(args: &SuiteArgs) -> Result<()> {
         scenario: format!("{} random single-symbol roots", args.queries),
         samples: vec![graph],
         phases: None,
+        load_end: system_load(),
     });
 
     for w in &workloads {
@@ -770,6 +798,7 @@ fn suite(args: &SuiteArgs) -> Result<()> {
                 "cpu_ms": summarize(&cpu),
                 "samples": w.samples,
                 "phases": w.phases,
+                "load_end": w.load_end,
             })
         })
         .collect();
@@ -925,6 +954,10 @@ fn markdown(output: &Value) -> String {
             g["truncated_queries"],
             mib(&g["peak_rss_bytes"]),
         ));
+    }
+    md.push_str(&format!("\n### Machine load\n\n- suite start: {}\n", output["system_load"]["start"]));
+    for r in &results {
+        md.push_str(&format!("- after {} / {}: {}\n", r["kind"], r["scenario"], r["load_end"]));
     }
     md
 }
