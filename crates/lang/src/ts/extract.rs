@@ -22,6 +22,8 @@ const MAX_SUITE_LOCALS: usize = 256;
 const MAX_PATTERN_NAMES: usize = 256;
 
 const SUITE_FUNCTIONS: &[&str] = &["describe", "suite", "context"];
+/// `TypeRef` name for array and tuple types; see `type_ref`.
+const ARRAY_TYPE: &str = "[]";
 const TEST_FUNCTIONS: &[&str] = &["it", "test", "specify"];
 
 pub fn is_test_path(path: &str) -> bool {
@@ -374,7 +376,30 @@ impl<'s> FileCx<'s> {
         } else {
             decl.ty = declarator.child_by_field_name("type").and_then(|t| annotation_type(t, source));
             decl.inferred_ty = value.and_then(|v| new_type(v, source));
-            walk(declarator, source, &mut decl.body);
+            match value.and_then(|v| object_literal(v)) {
+                Some((object, wrappers)) => {
+                    // `export const api = { jobs: () => ..., cancel: (id) => ... }`: each property is
+                    // a member, so a caller of `api.cancel` depends on `cancel`, not on every
+                    // property of `api`. Only the annotation and `as`/`satisfies` types belong to
+                    // the variable itself.
+                    if let Some(annotation) = declarator.child_by_field_name("type") {
+                        walk(annotation, source, &mut decl.body);
+                    }
+                    for wrapper in wrappers {
+                        for child in named_children(wrapper).into_iter().filter(|c| c.id() != object.id()) {
+                            if !matches!(
+                                child.kind(),
+                                "object" | "as_expression" | "satisfies_expression" | "parenthesized_expression"
+                            ) {
+                                walk(child, source, &mut decl.body);
+                            }
+                        }
+                    }
+                    let member_ids = object_members(object, source, &mut decl);
+                    decl.fingerprint = syntax::fingerprint(declarator, source, &member_ids, is_comment);
+                }
+                None => walk(declarator, source, &mut decl.body),
+            }
         }
         self.owned_nodes.push(declarator.id());
         self.decls.push(decl);
@@ -565,6 +590,94 @@ impl<'s> FileCx<'s> {
     }
 }
 
+/// The object literal a variable is initialised with, looking through `as const`, `satisfies T`
+/// and parentheses, plus the wrapper nodes passed through (their type parts belong to the variable).
+fn object_literal(value: Node<'_>) -> Option<(Node<'_>, Vec<Node<'_>>)> {
+    let mut wrappers = Vec::new();
+    let mut current = value;
+    for _ in 0..MAX_EXPR_DEPTH {
+        match current.kind() {
+            "object" => return Some((current, wrappers)),
+            "as_expression" | "satisfies_expression" | "parenthesized_expression" => {
+                wrappers.push(current);
+                current = named_children(current).into_iter().find(|n| !is_comment(n.kind()))?;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Properties of an object literal assigned to a module-level variable, as members of that
+/// variable. Spreads and computed keys stay in the variable's own body: they name no member.
+/// Returns the nodes that became members, to exclude from the variable's fingerprint.
+fn object_members(object: Node<'_>, source: &str, decl: &mut Decl) -> Vec<usize> {
+    let mut member_ids = Vec::new();
+    let mut by_name = HashMap::new();
+    for property in named_children(object) {
+        let member = match property.kind() {
+            "method_definition" => Some(method(property, source)),
+            "shorthand_property_identifier" => {
+                let name = text(property, source).to_owned();
+                let mut body = Body::default();
+                body.refs.push(Ref::Read { expr: Expr::Ident(name.clone()), line: line(property) });
+                Some(Member {
+                    name,
+                    kind: SymbolKind::Field,
+                    is_static: false,
+                    visibility: Visibility::Public,
+                    span: span(property),
+                    fingerprint: syntax::fingerprint(property, source, &[], is_comment),
+                    ty: None,
+                    inferred_ty: None,
+                    body,
+                })
+            }
+            "pair" => pair_member(property, source),
+            _ => None,
+        };
+        match member {
+            Some(member) => {
+                member_ids.push(property.id());
+                merge_member(&mut decl.members, &mut by_name, member);
+            }
+            None if !is_comment(property.kind()) => walk(property, source, &mut decl.body),
+            None => {}
+        }
+    }
+    member_ids
+}
+
+fn pair_member(pair: Node<'_>, source: &str) -> Option<Member> {
+    let key = pair.child_by_field_name("key")?;
+    let name = match key.kind() {
+        "property_identifier" | "number" => text(key, source).to_owned(),
+        "string" => string_value(key, source)?,
+        _ => return None, // computed key: not a static name
+    };
+    let value = pair.child_by_field_name("value")?;
+    let is_function = matches!(value.kind(), "arrow_function" | "function_expression" | "generator_function");
+    let mut body = Body::default();
+    let ty = if is_function {
+        function_body(value, source, &mut body);
+        value.child_by_field_name("return_type").and_then(|t| annotation_type(t, source))
+    } else {
+        walk(value, source, &mut body);
+        None
+    };
+    Some(Member {
+        name,
+        kind: if is_function { SymbolKind::Method } else { SymbolKind::Field },
+        is_static: false,
+        visibility: Visibility::Public,
+        span: span(pair),
+        fingerprint: syntax::fingerprint(pair, source, &[], is_comment),
+        ty,
+        inferred_ty: new_type(value, source),
+        body,
+    })
+}
+
 fn is_declaration(kind: &str) -> bool {
     matches!(
         kind,
@@ -725,6 +838,19 @@ fn type_ref(node: Node<'_>, source: &str) -> Option<TypeRef> {
     let name = match node.kind() {
         "type_identifier" => text(node, source).to_owned(),
         "nested_type_identifier" => compact(text(node, source)),
+        // `string`, `number`...: built-ins, never bound to a declaration, hence external. Knowing
+        // that a value is one keeps `name.at(0)` from being reported as a possibly missing edge.
+        // `any`, `unknown` and `object` say nothing about the value, so they stay untyped.
+        "predefined_type" => {
+            let name = text(node, source);
+            if matches!(name, "any" | "unknown" | "object") {
+                return None;
+            }
+            name.to_owned()
+        }
+        // `Row[]`, `[A, B]`, `readonly Row[]` are arrays whatever the element is. The name cannot
+        // be an identifier, so it never binds to a repository declaration: it is external.
+        "array_type" | "tuple_type" | "readonly_type" => ARRAY_TYPE.to_owned(),
         "generic_type" => return node.child_by_field_name("name").and_then(|n| type_ref(n, source)),
         _ => return None,
     };

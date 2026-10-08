@@ -143,10 +143,10 @@ impl FactCache {
 
 fn extractor_key(language: Language) -> &'static str {
     // Bump together with `EXTRACTOR_VERSION` in the frontends.
-    const _: () = assert!(java::EXTRACTOR_VERSION == 2 && ts::EXTRACTOR_VERSION == 1);
+    const _: () = assert!(java::EXTRACTOR_VERSION == 2 && ts::EXTRACTOR_VERSION == 2);
     match language {
         Language::Java => "java/2",
-        Language::TypeScript | Language::JavaScript => "ts/1",
+        Language::TypeScript | Language::JavaScript => "ts/2",
     }
 }
 
