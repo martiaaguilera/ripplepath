@@ -11,10 +11,18 @@
 Parser: tree-sitter-java 0.23.5. Extraction runs under a per-file time budget; files with syntax
 errors are still indexed (tree-sitter recovers) and flagged.
 
+The grammar rejects record patterns with a qualified head (`case Outer.Rec(var x) ->`,
+`o instanceof Outer.Rec(var x)`), which is valid Java 21. When a file has syntax errors, it is
+re-parsed with the dots of such heads replaced by `_` (same length, so every offset and line still
+matches the original text, from which all names are read); the re-parse is kept only if it has
+fewer error lines. Nested qualified patterns (`case A(B.C(var x))`) are not rewritten and remain
+syntax errors.
+
 ### Symbols
 Packages (as `module`), files, classes, interfaces, enums, records, annotation types (including
 nested types as `Outer.Inner`), methods, constructors (`<init>`), fields, enum constants, record
-components. Test methods: annotated `@Test`, `@ParameterizedTest`, `@RepeatedTest`, `@TestFactory`,
+components (each fingerprinted on its own declaration, so adding a method to a record does not
+modify its components). Test methods: annotated `@Test`, `@ParameterizedTest`, `@RepeatedTest`, `@TestFactory`,
 `@TestTemplate` (JUnit 4/5, TestNG `@Test`).
 
 Identity: `java:<package>.<Type>#<member>(<erased param types>)`. See docs/SPEC.md §2.
@@ -24,9 +32,26 @@ Identity: `java:<package>.<Type>#<member>(<erased param types>)`. See docs/SPEC.
   (`*`) imports, fully qualified names, type parameters (ignored).
 - Supertypes: `extends`, `implements`, interface `extends`.
 - Calls: unqualified (enclosing type hierarchy, then outer types, then static imports), `this.`,
-  `super.`, locals and parameters with declared types, `var` with `new`/cast initialisers, fields
-  (including `this.field`), static calls on types, chained calls through declared return types,
-  `new T(..).m()`, casts, method references.
+  `super.`, locals and parameters with declared types, fields (including `this.field`), static
+  calls on types, chained calls through declared return types, `new T(..).m()`, casts, method
+  references.
+- `var`: typed from a `new`/cast initialiser, or from the declared type of whatever the initialiser
+  resolves to (`var job = repo.find(id)`, rule `java.call.var-inferred`). Primitives are never
+  typed this way. Record pattern components (`case Rec(var a, var b)`) take the record component's
+  declared type.
+- Records: `rec.c()` with no declared `c()` is the implicit accessor of component `c`: a
+  `REFERENCES` edge to the component (rule `java.record.accessor`), and chained calls are typed by
+  the component's type. Enums inherit `java.lang.Enum`: `name()`, `ordinal()`, `values()`,
+  `valueOf()` are external, not unresolved.
+- JDK containers: element types of `java.util` collections (`List`, `Set`, `Queue`, `Deque` and
+  their common implementations), `Map` (values and keys), `Optional`, `java.lang.Iterable` and
+  `java.util.stream.Stream` reached from them, taken from the declared type arguments:
+  `list.get(i)`, `getFirst()`, `map.get(k)`, `map.values()`, `opt.orElseThrow()`,
+  `stream().filter(..).findFirst()`, for-each over them (`for (var j : jobs)`), and parameters of
+  lambdas passed to `forEach`/`removeIf`/`filter`/`map`/`anyMatch`/... and `Map.forEach`/`compute*`.
+  These signatures come from a fixed table, not from code the tool reads, so every edge typed
+  through them is `STATIC_INFERRED`. The simple name must be imported from the JDK package
+  (singly or on demand); a `List` from another library gets no JDK semantics.
 - Constructors: `new T(..)` by arity (implicit default constructor → the type), `this(..)`/`super(..)`.
 - Fields: `this.f`, `obj.f`, unqualified field names, `Type.CONSTANT`.
 - Overrides: same name and erased parameter simple names, across the in-repo hierarchy.
@@ -34,10 +59,17 @@ Identity: `java:<package>.<Type>#<member>(<erased param types>)`. See docs/SPEC.
 ### Known limitations (honest list)
 - **Not a compiler.** No full overload resolution: candidates are matched by name and arity; ties
   produce multiple `STATIC_INFERRED` edges rather than a guess.
-- **Generics are erased.** `List<Account> xs; xs.get(0).withdraw()` cannot type the receiver
-  (`List` is external) — the call is reported as unresolved, never guessed.
-- Lambda parameters with inferred types are untyped receivers (unresolved).
-- Block scopes inside a method are flattened; shadowing in nested blocks may mistype a receiver.
+- **Generics beyond the JDK table are erased.** Only top-level type arguments are kept
+  (`Map<UUID, List<Job>>` gives `List`, not `List<Job>`), type parameters of in-repo generic
+  types are not substituted, and `new ArrayList<Job>()` keeps no element type.
+- Lambda parameters are typed only for the container methods above. Lambdas passed to other
+  APIs (AssertJ `satisfies(x -> ...)`, JDBC `(rs, n) -> ...`, Spring callbacks) are untyped.
+- Block scopes inside a method are flattened. A local name declared more than once is typed only
+  when every declaration gives the same type; otherwise it is unknown (and calls on it are
+  reported), never "whichever came last".
+- A call on an untyped receiver is reported as unresolved only when some repository type declares
+  a method (or record component) with that name; otherwise no repository edge can be missing.
+- Receiver typing has a per-reference step budget (256); a chain that exhausts it is unknown.
 - Members inherited from *external* supertypes (e.g. a framework base class) are external.
 - Reflection, dependency injection, proxies and annotation-processor-generated code create runtime
   edges this analysis cannot see.
@@ -84,7 +116,15 @@ Overloads, getter/setter pairs and static/instance members with the same name sh
   (`arr.map`, `res.json`) to avoid noise.
 - Union, intersection, mapped and conditional types are not followed; type aliases are not expanded.
 - `tsconfig.json` `paths`/`baseUrl` aliases and package self-references are treated as external.
+  (Not yet needed by a dogfooding target: QuantaRun's console uses relative imports only.)
 - CommonJS (`require`, `module.exports`) and dynamic `import()` are not resolved.
-- Object-literal methods and prototype assignment are not symbols.
+- Properties of an object literal assigned to a module-level `const`/`let`/`var` are members of that
+  variable (`export const api = { jobs: () => ..., cancel(id) {...} }` gives `ts:path#api.jobs`,
+  `ts:path#api.cancel`), through `as const`, `satisfies T` and parentheses. A property reached
+  through a spread (`{ ...base }`) or a computed key is not a member: such accesses are unresolved,
+  not guessed. Nested object literals are not split further. Object literals elsewhere (arguments,
+  return values) and prototype assignment are not symbols.
+- Array/tuple annotations (`Row[]`, `[A, B]`, `readonly T[]`) and primitive annotations (`string`,
+  `number`, ...) mark a value as external; `any`, `unknown` and `object` leave it untyped.
 - Duplicate test titles in a file are disambiguated by order (`title #2`); test titles built from
   template substitutions get a line-based name and therefore no stable identity.

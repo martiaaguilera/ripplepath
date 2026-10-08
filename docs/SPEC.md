@@ -74,6 +74,12 @@ Edges are directed `from → to` meaning *from depends on to*. Each edge carries
 Evidence classes, strongest first: `RESOLVED_EXACT`, `COVERAGE_OBSERVED`, `STATIC_INFERRED`,
 `HISTORY_COCHANGE`, `NAMING_HEURISTIC`. They are ordinal labels, **not probabilities**.
 
+An edge is `RESOLVED_EXACT` only when every step that found its target follows the language's own
+rules over declarations in the repository. A step that relies on anything else (several overloads
+of one arity, ambiguous `export *`, or element types of JDK containers taken from Ripplepath's fixed
+table of `java.util` signatures) makes the edge `STATIC_INFERRED`. See docs/LANGUAGE_SUPPORT.md for
+the per-language rules.
+
 ## 5. Impact propagation [implemented]
 Starting from changed symbols, traverse dependents:
 - every edge except `CONTAINS` and `IMPORTS` is followed in reverse (`x → changed` makes `x`

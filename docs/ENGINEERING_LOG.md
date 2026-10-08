@@ -2,6 +2,48 @@
 
 Meaningful discoveries only, newest first.
 
+## 2026-10-08 — Dogfooding on QuantaRun
+
+Full write-up and reproducible commands: docs/DOGFOODING_QUANTARUN.md.
+
+**The fixture said "no unresolved references"; a real Spring service had 2,478.** Almost all came
+from idioms the hand-written fixtures did not use: record accessors (`job.id()`: 239 alone),
+`var` initialised from a call, enum methods inherited from `java.lang.Enum`, and generic JDK
+containers (`map.get(id).cancel()`, `for (var j : jobs)`, `xs.stream().filter(j -> j.live())`).
+After modelling them: 112. Fixtures written by the tool's author test what the author thought of.
+
+**A wrong fingerprint was harmless until an edge pointed at it.** Record components carried the
+fingerprint of the whole record, so adding a method to a record marked every component modified.
+Nothing referenced components, so nobody noticed; once accessor calls became edges, one new method
+on `WorkerProperties` impacted every caller of every accessor. 69 spurious changes in one commit.
+
+**The grammar, not the code, was broken.** Four valid Java 21 files had syntax errors:
+tree-sitter-java 0.23.5 accepts only a simple name at the head of a record pattern
+(`case Outer.Rec(var x) ->`). Each such file made the analysis fall back to the full suite. The fix
+re-parses a copy where those dots become `_`; because only bytes of equal length change, every
+node offset is valid in the original text, which is where names are read from.
+
+**Flattened scopes were safe only while lambdas were untyped.** Locals are flattened per method
+and the last same-named declaration won. With lambda parameters typed, `w` in two lambdas over
+different collections would have been silently mistyped. A local is now typed only when all its
+declarations agree. Resolving every declaration branches, so receiver typing got a per-reference
+step budget; the regression test (8 declarations per name, 20 levels) took 23 s with a 4,096-step
+budget in a debug build and passed only after the budget became 256.
+
+**"Unresolved" needs a reason to suspect a missing edge.** `rs.getString(1)` in a JDBC lambda was
+reported even though no repository type declares `getString`: no repository edge can be missing
+there. Java now uses the same rule as the TypeScript frontend (report only names some repository
+type declares). That rule is sound, not a heuristic: it is about the target set, not the receiver.
+
+**`any` is not a primitive.** Treating predefined TypeScript types as external also swallowed the
+fixture's deliberately untyped `const legacy: any`, which an engine test caught; `any`, `unknown`
+and `object` stay untyped.
+
+**Open, not fixed:** after the forward `OVERRIDES` hop from a changed implementation to its
+interface method, traversal also reaches *sibling* implementations, recommending their tests
+(17 of 60 static-path tests in the reference range). Spring HTTP routes have no static edges, so a
+changed controller signature impacted nothing in `82dacd0`.
+
 ## 2026-10-07 — Session 3: persistent incremental index
 
 **Incremental facts, recomputed resolution.** Resolution depends on every file's imports, so the
