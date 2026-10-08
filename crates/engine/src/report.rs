@@ -101,6 +101,9 @@ pub enum FileCategory {
     Ci,
     Container,
     Config,
+    /// A file loaded by code at run time (`src/*/resources/**`): properties, templates, data. No
+    /// static edge reaches it, so tests that depend on it cannot be found from the graph.
+    Resource,
 }
 
 /// Measured coverage of a symbol, from the latest ingested reports.

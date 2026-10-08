@@ -130,6 +130,7 @@ A full-suite decision still lists the recommended tests as the best place to sta
 | `CI_CHANGED` | medium | CI configuration changed |
 | `CONTAINER_CHANGED` | medium | a Dockerfile or compose file changed |
 | `CONFIG_CHANGED` | medium | application configuration changed (`application*.yml`, `.env*`, `config/` files) |
+| `RESOURCE_CHANGED` | medium | a file under a `resources/` directory changed (properties, templates, data read at run time); no static edge reaches it |
 | `CHANGED_FILE_NOT_UNDERSTOOD` | high | a changed file has a high-severity syntax error, parse failure or exceeds the parse limit |
 | `IMPACT_TRUNCATED` | high | impact traversal hit its node limit |
 | `UNRESOLVED_REFERENCE` | medium | a changed or impacted symbol has a reference that could not be resolved |
@@ -225,12 +226,14 @@ meaningful.**
 
 | Mode | Recall (pooled) | Missed | Failing cases fully caught | `FULL_SUITE` | Mean tests saved | Mean recorded runtime saved | Mean first failure |
 |---|---|---|---|---|---|---|---|
-| conservative | 10/15 (0.6667) | 5 | 4/5 | 0/11 | 0.6372 | 0.6346 (11 cases) | position 1.75, 14.0 ms (4 cases) |
+| conservative | 15/15 (1.0) | 0 | 5/5 | 2/11 | 0.4554 | 0.4528 (11 cases) | position 1.6, 12.0 ms (5 cases) |
 | balanced | 10/15 (0.6667) | 5 | 4/5 | 0/11 | 0.6372 | 0.6346 (11 cases) | position 1.75, 14.0 ms (4 cases) |
 | fast_feedback | 10/15 (0.6667) | 5 | 4/5 | 0/11 | 0.6372 | 0.6346 (11 cases) | position 1.75, 14.0 ms (4 cases) |
 
-The three modes coincide because no change in this history raised a fallback reason, and no change
-had more than 10 recommended tests for fast feedback to cut.
+Only v6..v7 and v7..v8 raise a fallback reason (`RESOURCE_CHANGED`, medium). Conservative mode widens
+to the full suite on any reason and so catches every failure, at the cost of running all 20 tests in
+those two cases; balanced widens only on high-severity reasons. Balanced and fast feedback coincide
+because no change had more than 10 recommended tests for fast feedback to cut.
 
 | Case | What changed | Selected / total | Failed | Caught | First failure |
 |---|---|---|---|---|---|
@@ -251,9 +254,16 @@ had more than 10 recommended tests for fast feedback to cut.
 `TaxCalculatorTest#loadsRatesFromResource` and four `CheckoutServiceTest` tests error. Ripplepath has
 no edge from Java code to a resource file it reads by name, the file matches no fallback pattern
 (`CONFIG_CHANGED` covers `application*.yml`, `.env*`, `config/`), and an unsupported file change is
-low severity and never widens the selection (§5). So the analysis selected nothing and decided
-`SELECTED` with no reason — the clearest gap this evaluation found. It is reported, not tuned away:
-changing a rule only to make this fixture score 100 % would measure nothing.
+low severity and never widens the selection (§5). The first replay therefore selected nothing and decided
+`SELECTED` with no reason — the clearest gap this evaluation found.
+
+**What changed as a result, and what it does not prove.** Files under `resources/` directories are now
+classified `RESOURCE` and raise `RESOURCE_CHANGED` (medium): a general rule for data code loads by name,
+not a pattern matching this fixture. Balanced mode still runs nothing for v6..v7 (it widens only on
+high-severity reasons) but now says why; conservative mode runs the full suite and catches all five.
+Because the rule was added after seeing this miss, the conservative 15/15 is not an independent
+measurement — a held-out history would be needed for that. Before the rule all three modes scored
+10/15 with zero fallbacks.
 
 Runtime figures are sums of single-run JUnit durations of a few milliseconds each, measured on one
 laptop; they vary between collections and say nothing about CI time on a real suite.

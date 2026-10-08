@@ -110,9 +110,20 @@ fn replay_of_the_real_history_scores_what_was_measured() {
     assert_eq!((sample.cases, sample.failing_cases, sample.failed_tests), (11, 5, 15));
     assert_eq!(sample.label.as_deref(), Some(SMALL_SAMPLE_LABEL));
 
-    // No change in this history raised a fallback reason, so the three modes decide alike; fast
-    // feedback never had more than 10 recommendations to cut.
-    for aggregate in &report.modes {
+    // Only v6..v7 and v7..v8 raise a fallback reason (RESOURCE_CHANGED, medium): conservative mode
+    // widens to the full suite on any reason, balanced only on high ones, so they diverge there.
+    let by_mode = |mode| report.modes.iter().find(|a| a.mode == mode).unwrap();
+    let conservative = by_mode(SelectionMode::Conservative);
+    assert_eq!((conservative.caught_failures, conservative.missed_failures), (15, 0));
+    assert_eq!(conservative.failing_test_recall, Some(1.0));
+    assert_eq!((conservative.failing_cases, conservative.failing_cases_fully_caught), (5, 5));
+    assert_eq!(conservative.full_suite_fallbacks, 2);
+    assert_eq!(conservative.mean_selected_test_reduction, Some(0.4554));
+    assert_eq!(conservative.mean_runtime_reduction, Some(0.4528));
+    assert_eq!(conservative.mean_first_failure_position, Some(1.6));
+    assert_eq!(conservative.mean_time_to_first_failure_ms, Some(12.0));
+    for mode in [SelectionMode::Balanced, SelectionMode::FastFeedback] {
+        let aggregate = by_mode(mode);
         assert_eq!((aggregate.failed_tests, aggregate.caught_failures, aggregate.missed_failures), (15, 10, 5));
         assert_eq!(aggregate.failing_test_recall, Some(0.6667));
         assert_eq!((aggregate.failing_cases, aggregate.failing_cases_fully_caught), (5, 4));
@@ -123,6 +134,7 @@ fn replay_of_the_real_history_scores_what_was_measured() {
         assert_eq!((aggregate.time_to_first_failure_cases, aggregate.mean_time_to_first_failure_ms), (4, Some(14.0)));
     }
 
+    // Balanced / fast-feedback scores per case; conservative is identical except where it fell back.
     let expected: [Expected; 11] = [
         ("v1..v2", 7, 17, 0, 0, None),
         ("v2..v3", 12, 17, 3, 3, Some(3)),
@@ -138,10 +150,20 @@ fn replay_of_the_real_history_scores_what_was_measured() {
     ];
     for (case, (name, selected, total, failed, caught, first)) in report.cases.iter().zip(expected) {
         assert_eq!(case.name, name);
+        let resource_change = matches!(name, "v6..v7" | "v7..v8");
         for result in &case.modes {
             let s = &result.score;
+            if resource_change {
+                assert_eq!(result.fallback_reasons, vec!["RESOURCE_CHANGED".to_owned()], "{name}");
+            } else {
+                assert!(result.fallback_reasons.is_empty(), "{name}: {:?}", result.fallback_reasons);
+            }
+            if resource_change && result.mode == SelectionMode::Conservative {
+                assert_eq!(result.decision, SelectionDecision::FullSuite, "{name}");
+                assert_eq!((s.selected_tests, s.caught_failures), (total, failed), "{name}");
+                continue;
+            }
             assert_eq!(result.decision, SelectionDecision::Selected, "{name}");
-            assert!(result.fallback_reasons.is_empty(), "{name}: {:?}", result.fallback_reasons);
             assert_eq!(
                 (s.selected_tests, s.total_tests, s.failed_tests, s.caught_failures, s.first_failure_position),
                 (selected, total, failed, caught, first),
@@ -156,8 +178,9 @@ fn replay_of_the_real_history_scores_what_was_measured() {
     let bulk = &case("v4..v5").modes[1].score;
     assert_eq!(bulk.time_to_first_failure_ms, Some(12));
     assert_eq!(bulk.runtime_reduction, Some(0.6515));
-    // v6..v7 breaks tax-rates.properties: no code changed, no reason fired, nothing was selected,
-    // and every failure was missed. This is the miss the evaluation exists to expose.
+    // v6..v7 breaks tax-rates.properties: no code changed, so no test has a static path to it.
+    // The change is now named (RESOURCE_CHANGED); balanced mode still runs nothing and misses all
+    // five failures, conservative mode runs the full suite and catches them.
     let resource = case("v6..v7");
     assert_eq!(
         resource.observed.failed,
@@ -171,6 +194,7 @@ fn replay_of_the_real_history_scores_what_was_measured() {
     );
     assert_eq!(resource.modes[1].score.missed_failures, resource.observed.failed);
     assert_eq!(resource.modes[1].score.failing_test_recall, Some(0.0));
+    assert_eq!(resource.modes[0].score.failing_test_recall, Some(1.0));
 
     // Every case sees exactly the JUnit runs of base and its ancestors: one per earlier snapshot.
     for (i, case) in report.cases.iter().enumerate() {

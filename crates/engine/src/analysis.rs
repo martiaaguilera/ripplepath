@@ -326,6 +326,7 @@ fn fallback_reasons(
             FileCategory::Ci => (Severity::Medium, "CI_CHANGED"),
             FileCategory::Container => (Severity::Medium, "CONTAINER_CHANGED"),
             FileCategory::Config => (Severity::Medium, "CONFIG_CHANGED"),
+            FileCategory::Resource => (Severity::Medium, "RESOURCE_CHANGED"),
         };
         add(severity, code, format!("{} changed; its effects are not traced through code", file.path));
     }

@@ -78,6 +78,10 @@ pub fn classify(path: &str) -> Option<FileCategory> {
     {
         return Some(FileCategory::Config);
     }
+    // After config, so `application.yml` under resources stays CONFIG. Documentation never runs.
+    if in_dir("resources") && !name.ends_with(".md") {
+        return Some(FileCategory::Resource);
+    }
     None
 }
 
@@ -100,6 +104,9 @@ mod tests {
             ("Dockerfile", Some(FileCategory::Container)),
             ("docker-compose.yml", Some(FileCategory::Container)),
             ("src/main/resources/application-prod.yml", Some(FileCategory::Config)),
+            ("src/main/resources/tax-rates.properties", Some(FileCategory::Resource)),
+            ("src/test/resources/fixtures/order.json", Some(FileCategory::Resource)),
+            ("src/main/resources/README.md", None),
             ("src/main/java/A.java", None),
             ("README.md", None),
         ];

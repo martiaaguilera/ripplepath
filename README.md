@@ -101,9 +101,11 @@ Details, permissions and security notes: [docs/GITHUB_INTEGRATION.md](docs/GITHU
 `ripplepath evaluate --repo . --cases cases.json --db evidence.db` replays past changes using only
 evidence recorded at each change's base or earlier, and scores the selection against the tests that
 really failed at head. On the bundled 12-snapshot Java history (11 changes, 5 with failures, 15
-failing tests, outcomes from actually running the tests) recall is 10/15: all five misses come from
-one change to a resource file the tests read at run time. A small sample, not a statistic; method
-and per-case results in [docs/TEST_INTELLIGENCE.md](docs/TEST_INTELLIGENCE.md) §6.
+failing tests, outcomes from actually running the tests) balanced mode catches 10/15: all five misses
+come from one change to a resource file the tests read at run time. That miss led to a new
+`RESOURCE_CHANGED` fallback, with which conservative mode catches 15/15 (not independent: the rule
+was added after seeing the miss). A small sample, not a statistic; method and per-case results in
+[docs/TEST_INTELLIGENCE.md](docs/TEST_INTELLIGENCE.md) §6.
 
 ## How it works
 
