@@ -1,0 +1,22 @@
+[package]
+name = "ripplepath-mcp"
+description = "Read-only Model Context Protocol (stdio) adapter over the Ripplepath engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+ripplepath-core.workspace = true
+ripplepath-engine.workspace = true
+ripplepath-graph.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

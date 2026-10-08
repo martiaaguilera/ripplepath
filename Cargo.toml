@@ -17,6 +17,7 @@ ripplepath-lang = { path = "crates/lang" }
 ripplepath-graph = { path = "crates/graph" }
 ripplepath-engine = { path = "crates/engine" }
 ripplepath-evidence = { path = "crates/evidence" }
+ripplepath-mcp = { path = "crates/mcp" }
 ripplepath-server = { path = "crates/server" }
 ripplepath-storage = { path = "crates/storage" }
 
