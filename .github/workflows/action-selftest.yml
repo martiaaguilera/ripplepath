@@ -76,10 +76,13 @@ jobs:
           test "$FIXTURE_EXIT" = 2
           test "$FIXTURE_POLICY" = FAIL
           for dir in self fixture; do
-            for file in analysis.json summary.md ripplepath.sarif annotations.txt; do
-              test -s "$RUNNER_TEMP/$dir/$file" || { echo "missing $dir/$file"; exit 1; }
+            for file in analysis.json summary.md ripplepath.sarif; do
+              test -s "$RUNNER_TEMP/$dir/$file" || { echo "missing or empty: $dir/$file"; exit 1; }
             done
+            # Legitimately empty when nothing has a source location and the policy passes.
+            test -f "$RUNNER_TEMP/$dir/annotations.txt" || { echo "missing: $dir/annotations.txt"; exit 1; }
           done
+          test -s "$RUNNER_TEMP/fixture/annotations.txt"
           jq -e '.policy.result == "FAIL"' "$RUNNER_TEMP/fixture/analysis.json"
           jq -e '[.policy.gates[] | select(.gate == "new_architecture_violation")][0].status == "FAIL"' "$RUNNER_TEMP/fixture/analysis.json"
           grep -q '^## Ripplepath — Change Intelligence$' "$RUNNER_TEMP/fixture/summary.md"
