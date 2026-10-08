@@ -464,6 +464,52 @@ struct Workload {
     kind: &'static str,
     scenario: String,
     samples: Vec<Value>,
+    /// One extra, unmeasured-for-the-headline run with per-stage timings, for attribution.
+    phases: Option<Value>,
+}
+
+/// Fields that must not vary between iterations of one workload: they are what the run computed,
+/// not how long it took. A difference would mean the iterations did not start from the same
+/// state, and their timings would not be comparable.
+const DETERMINISTIC_FIELDS: &[&str] = &[
+    "files",
+    "parsed",
+    "reused",
+    "symbols",
+    "edges",
+    "delta",
+    "files_changed",
+    "symbols_changed",
+    "symbols_impacted",
+    "tests_recommended",
+    "tests_total",
+    "impact_truncated",
+];
+
+fn check_consistent(w: &Workload) -> Result<()> {
+    let Some(first) = w.samples.first() else { return Ok(()) };
+    for sample in &w.samples[1..] {
+        for field in DETERMINISTIC_FIELDS {
+            if sample[*field] != first[*field] {
+                return Err(format!("{} / {}: `{field}` differs between iterations", w.kind, w.scenario).into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Index `rev` once with stage timings, starting from a copy of `start` (or an empty database).
+fn phase_run(repo: &str, rev: &str, start: Option<&Path>, dbs: &Path) -> Result<Value> {
+    let db = dbs.join("phases.db");
+    match start {
+        Some(start) => copy_db(start, &db)?,
+        None => remove_db(&db)?,
+    }
+    eprintln!("index phases {rev}");
+    let value =
+        child(&["measure", "index", "--repo", repo, "--rev", rev, "--db", &path(&db), "--phases", "--no-probe"])?;
+    remove_db(&db)?;
+    Ok(value)
 }
 
 fn suite(args: &SuiteArgs) -> Result<()> {
@@ -512,23 +558,33 @@ fn suite(args: &SuiteArgs) -> Result<()> {
     let iterations = args.iterations.max(1);
     let mut workloads: Vec<Workload> = Vec::new();
 
-    // Cold index: a new database every iteration.
+    // Cold index: a new database every iteration. One extra, discarded run comes first: it pays
+    // for the OS reading the repository's pack files and this binary from disk, which would
+    // otherwise land in the first sample only and inflate the spread rather than the median.
     let full_db = dbs.join("full.db");
     let mut samples = Vec::new();
-    for i in 0..iterations {
+    for i in 0..=iterations {
         let db = dbs.join(format!("cold-{i}.db"));
         remove_db(&db)?;
-        eprintln!("index cold {}/{iterations}", i + 1);
-        samples.push(child(
+        if i == 0 {
+            eprintln!("index cold (warm-up, discarded)");
+        } else {
+            eprintln!("index cold {i}/{iterations}");
+        }
+        let sample = child(
             &[&["measure", "index", "--repo", &repo_arg, "--rev", &dataset.full_rev, "--db", &path(&db)], memory_flag]
                 .concat(),
-        )?);
-        if i + 1 == iterations {
+        )?;
+        if i > 0 {
+            samples.push(sample);
+        }
+        if i == iterations {
             copy_db(&db, &full_db)?;
         }
         remove_db(&db)?;
     }
-    workloads.push(Workload { kind: "index", scenario: "cold (empty database)".into(), samples });
+    let phases = Some(phase_run(&repo_arg, &dataset.full_rev, None, &dbs)?);
+    workloads.push(Workload { kind: "index", scenario: "cold (empty database)".into(), samples, phases });
 
     // Warm, unchanged revision: everything comes from the cache, nothing is written.
     let warm_db = dbs.join("warm.db");
@@ -544,7 +600,8 @@ fn suite(args: &SuiteArgs) -> Result<()> {
             .concat(),
         )?);
     }
-    workloads.push(Workload { kind: "index", scenario: "warm, unchanged revision".into(), samples });
+    let phases = Some(phase_run(&repo_arg, &dataset.full_rev, Some(&warm_db), &dbs)?);
+    workloads.push(Workload { kind: "index", scenario: "warm, unchanged revision".into(), samples, phases });
 
     for (label, base, head) in &dataset.scenarios {
         // The database as it was after indexing `base`; each iteration starts from a copy.
@@ -564,7 +621,8 @@ fn suite(args: &SuiteArgs) -> Result<()> {
                 &[&["measure", "index", "--repo", &repo_arg, "--rev", head, "--db", &path(&db)], memory_flag].concat(),
             )?);
         }
-        workloads.push(Workload { kind: "index", scenario: format!("update: {label}"), samples });
+        let phases = Some(phase_run(&repo_arg, head, Some(&template), &dbs)?);
+        workloads.push(Workload { kind: "index", scenario: format!("update: {label}"), samples, phases });
     }
 
     for (label, base, head) in &dataset.scenarios {
@@ -575,7 +633,7 @@ fn suite(args: &SuiteArgs) -> Result<()> {
                 &[&["measure", "analyze", "--repo", &repo_arg, "--base", base, "--head", head], memory_flag].concat(),
             )?);
         }
-        workloads.push(Workload { kind: "analyze", scenario: format!("{label}, no database"), samples });
+        workloads.push(Workload { kind: "analyze", scenario: format!("{label}, no database"), samples, phases: None });
 
         let db = dbs.join("analyze.db");
         copy_db(&full_db, &db)?;
@@ -604,7 +662,12 @@ fn suite(args: &SuiteArgs) -> Result<()> {
                 .concat(),
             )?);
         }
-        workloads.push(Workload { kind: "analyze", scenario: format!("{label}, warm database"), samples });
+        workloads.push(Workload {
+            kind: "analyze",
+            scenario: format!("{label}, warm database"),
+            samples,
+            phases: None,
+        });
     }
 
     eprintln!("graph queries");
@@ -618,8 +681,12 @@ fn suite(args: &SuiteArgs) -> Result<()> {
         kind: "graph",
         scenario: format!("{} random single-symbol roots", args.queries),
         samples: vec![graph],
+        phases: None,
     });
 
+    for w in &workloads {
+        check_consistent(w)?;
+    }
     let results: Vec<Value> = workloads
         .iter()
         .map(|w| {
@@ -633,11 +700,12 @@ fn suite(args: &SuiteArgs) -> Result<()> {
                 "peak_rss_bytes": summarize(&peak),
                 "cpu_ms": summarize(&cpu),
                 "samples": w.samples,
+                "phases": w.phases,
             })
         })
         .collect();
     let output = json!({
-        "harness": {"version": env!("CARGO_PKG_VERSION"), "iterations": iterations, "profile": if cfg!(debug_assertions) { "debug" } else { "release" }},
+        "harness": {"version": env!("CARGO_PKG_VERSION"), "iterations": iterations, "cold_index_warmup_runs": 1, "profile": if cfg!(debug_assertions) { "debug" } else { "release" }},
         "host": host_info(),
         "system_load": {"start": load_at_start, "end": system_load()},
         "dataset": dataset.description,
@@ -730,6 +798,23 @@ fn markdown(output: &Value) -> String {
             first["db_bytes"].as_f64().map_or("–".to_owned(), |b| format!("{:.1}", b / (1024.0 * 1024.0))),
             f(&r["cpu_ms"]["median"]),
             mib(&r["peak_rss_bytes"]["median"]),
+        ));
+    }
+    md.push_str("\n### Index stages (one extra run per workload, ms)\n\n| Workload | open | build_snapshot | indexed_graph | apply_graph | close | load_graph (separate call) |\n|---|---|---|---|---|---|---|\n");
+    for r in results.iter().filter(|r| r["kind"] == "index") {
+        let p = &r["phases"]["phases_ms"];
+        if p.is_null() {
+            continue;
+        }
+        md.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
+            r["scenario"].as_str().unwrap_or(""),
+            f(&p["open"]),
+            f(&p["build_snapshot"]),
+            f(&p["indexed_graph"]),
+            f(&p["apply_graph"]),
+            f(&p["close"]),
+            f(&p["load_previous_graph (separate call)"]),
         ));
     }
     md.push_str("\n### Analyze\n\n| Workload | n | median ms | p95 ms | min ms | max ms | files changed | symbols changed | impacted | tests recommended | CPU ms (median) | peak RSS MiB (median) |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n");
