@@ -27,6 +27,8 @@ Status: controls listed here are implemented and tested unless marked *planned*.
 | XSS from identifiers in the UI | React escapes text; no `dangerouslySetInnerHTML`; strict CSP (`script-src 'self'`). | server header test |
 | DNS rebinding against the local server | `Host` must be loopback (`localhost`, `127.0.0.1`, `[::1]`) or explicitly `--allow-host`ed. | `dns_rebinding_hosts_are_rejected` |
 | Server reading arbitrary local repos | Repository fixed at startup; API accepts revisions only. | API design |
+| Coding agent (MCP) reading other repositories or running commands | `ripplepath mcp` fixes the repository at startup; tools accept revision specs and symbol ids only (validated: printable, bounded length), never paths, commands or URLs; no process is spawned. stdio only, no listener. | `crates/mcp` protocol tests, ADR 0007 |
+| Oversized or malformed MCP messages | Lines above 1 MiB are discarded without buffering; batches, bad ids and invalid JSON get JSON-RPC errors; requests are processed sequentially; results above 512 KiB are refused. | `oversized_lines_are_dropped_and_the_stream_resyncs`, `protocol_errors_use_json_rpc_codes` |
 | Request floods | At most 2 concurrent analyses; permit held inside the blocking task so client disconnects cannot release it early. | design |
 | Malformed revision input | 1–256 chars, no control characters; passed to gix rev-parse, never a shell. | API test |
 | Malicious XML (coverage/JUnit) | *Planned* with ingestion: no DTD/entity expansion, size caps. | — |

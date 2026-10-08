@@ -414,7 +414,7 @@ fn tier(reason: TestReason, path: &[ripplepath_graph::Hop]) -> EvidenceTier {
 /// changed, when shared code inside them (lifecycle hooks, fixtures, helpers) changed or is
 /// impacted — that code runs for every test they contain — when measured coverage links them to
 /// the change, or when they are impacted and none of their units is.
-fn recommend_tests(
+pub(crate) fn recommend_tests(
     head: &CodeGraph,
     changed: &[ChangedSymbol],
     impacted: &[ImpactedSymbolReport],

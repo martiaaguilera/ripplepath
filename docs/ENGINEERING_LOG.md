@@ -2,6 +2,34 @@
 
 Meaningful discoveries only, newest first.
 
+## 2026-10-08 — Read-only MCP server for coding agents
+
+**The protocol moved under us.** The current MCP revision (`2026-07-28`) is stateless: no
+`initialize`, per-request `_meta` with version and client capabilities, mandatory `server/discover`,
+`resultType` on every result. Deployed clients still send `initialize`. The adapter is dual-era,
+selected per request by the presence of `_meta["io.modelcontextprotocol/protocolVersion"]`.
+
+**Hand-written over `rmcp`.** The official SDK is maintained and Apache-2.0, but a sequential
+stdio adapter needs about a dozen messages, and the SDK's async/macro layers and release churn
+across the protocol transition cost more than they save. Owning the line reader is also what lets
+the 1 MiB message bound apply *before* buffering. ADR 0007.
+
+**`what_if` reuses the analysis instead of approximating it.** A hypothetical edit is a
+`ChangedSymbol` with `MODIFIED` fed to the same impact traversal and `recommend_tests`; on the
+java-banking fixture `what_if Money#minus(Money)` reaches `Account#withdraw` (Account.java:27,
+`CALLS`, `RESOLVED_EXACT`) and `TransferService#transfer` at depth 2, and recommends one test each
+from `MoneyTest`, `TransferServiceTest` and `TransferControllerTest`, each with its path.
+What it cannot know (new calls, signature changes) is stated in its note.
+
+**Dependency paths need direction and a ranking.** `dependency_path` follows stored edges (depends-on)
+with the impact traversal's ranking, skips `CONTAINS` (it would join any two members of a class), and
+falls back to the reverse chain so "how are A and B related" gets an answer either way. A miss is
+reported as "not proof of independence", with `search_truncated` when the cap made it inconclusive.
+
+**Agents need ids before they can ask.** Every symbol tool takes exact ids; `find_symbols` and the
+"similar ids" list on an unknown id (whole id → last segment → owner's members) make that cheap
+without guessing on the agent's behalf.
+
 ## 2026-10-08 — Dogfooding on QuantaRun
 
 Full write-up and reproducible commands: docs/DOGFOODING_QUANTARUN.md.

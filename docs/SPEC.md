@@ -155,3 +155,18 @@ instead. The risk score is never a gate. CLI exit codes: 0 success, 1 error, 2 p
 `analyze --fail-on-policy`.
 
 The report additions in §10–§14 are additive fields; `schema_version` stays 1.
+
+## 15. Single-revision queries [implemented]
+Used by the MCP adapter (docs/MCP.md); computed on one revision's graph, with ingested coverage
+joined as in §7 when a database is given.
+- **What if** `symbol`: §5 impact from that one root, treated as `MODIFIED` (same id), then §7 test
+  recommendation. Equals what `analyze` reports for a committed body-only edit of the symbol.
+  Uncertainty: unresolved references in the root and impacted symbols, syntax errors in the root's
+  file, unindexed files and rejected paths of the revision, truncation, coverage from other commits.
+- **Dependency path** `from → to`: shortest chain of edges in their stored direction (`from` depends
+  on … depends on `to`), every kind except `CONTAINS`, breadth-first and depth-bounded (default 8);
+  among equally short chains the strongest weakest-edge evidence wins, then parent id, then edge.
+  If the visited-symbol cap is hit without finding `to`, the miss is reported as inconclusive.
+- **Symbol info**: the symbol, its layer (none for generated paths), its incoming and outgoing edges,
+  rule-breaking dependencies it takes part in (the revision's own `ripplepath.yml`, as
+  `architecture check`), and the tests the what-if recommendation lists.

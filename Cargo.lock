@@ -1921,6 +1921,7 @@ dependencies = [
  "ripplepath-core",
  "ripplepath-engine",
  "ripplepath-graph",
+ "ripplepath-mcp",
  "ripplepath-server",
  "serde_json",
  "tempfile",
@@ -1997,6 +1998,19 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-java",
  "tree-sitter-typescript",
+]
+
+[[package]]
+name = "ripplepath-mcp"
+version = "0.1.0"
+dependencies = [
+ "ripplepath-core",
+ "ripplepath-engine",
+ "ripplepath-graph",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

@@ -7,6 +7,7 @@ mod assess;
 mod changes;
 pub mod config;
 mod evidence;
+pub mod explore;
 pub mod fixture;
 mod history;
 mod index;
