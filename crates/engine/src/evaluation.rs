@@ -102,11 +102,18 @@ struct CaseEntry {
 
 fn read_bounded(path: &Path, limit: u64) -> Result<String, EvaluationError> {
     let io = |source| EvaluationError::Io { path: path.to_owned(), source };
+    use std::io::Read;
     let size = std::fs::metadata(path).map_err(io)?.len();
     if size > limit {
         return Err(EvaluationError::TooLarge { path: path.to_owned(), size, limit });
     }
-    std::fs::read_to_string(path).map_err(io)
+    // A pipe or device reports size 0; bound the read itself as well.
+    let mut text = String::new();
+    std::fs::File::open(path).map_err(io)?.take(limit + 1).read_to_string(&mut text).map_err(io)?;
+    if text.len() as u64 > limit {
+        return Err(EvaluationError::TooLarge { path: path.to_owned(), size: text.len() as u64, limit });
+    }
+    Ok(text)
 }
 
 /// Reads a cases file (JSON, `{"cases": [{"name", "base", "head", "junit": [paths]}]}`). JUnit
