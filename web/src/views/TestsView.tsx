@@ -121,7 +121,7 @@ export function TestsView({ report, url, navigate }: Props) {
             <Empty>No test has a dependency path or measured coverage reaching this change.</Empty>
           ) : (
             <div
-              ref={rows.ref}
+              ref={rows.setContainer}
               className={`table-wrap ${rows.windowed ? "table-wrap--windowed" : ""}`}
               {...(rows.windowed ? { tabIndex: 0, "aria-label": "Ranked tests, scrollable" } : {})}
             >
