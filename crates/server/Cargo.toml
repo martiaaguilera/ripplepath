@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 ripplepath-core.workspace = true
 ripplepath-engine.workspace = true
+ripplepath-git.workspace = true
 axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true

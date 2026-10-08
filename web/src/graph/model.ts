@@ -22,9 +22,18 @@ export const EVIDENCE_LABEL: Record<Evidence, string> = {
   NAMING_HEURISTIC: "Naming heuristic",
 };
 
+export const EVIDENCE_CLASSES: readonly Evidence[] = [
+  "RESOLVED_EXACT",
+  "COVERAGE_OBSERVED",
+  "STATIC_INFERRED",
+  "HISTORY_COCHANGE",
+  "NAMING_HEURISTIC",
+];
+
 export interface Filters {
   maxDepth: number;
   edgeKinds: ReadonlySet<EdgeKind>;
+  evidence: ReadonlySet<Evidence>;
   query: string;
   /** Hide changed symbols that have no visible edge: they have no blast radius to show. */
   hideIsolated: boolean;
@@ -83,7 +92,11 @@ export function buildView(report: AnalysisReport, filters: Filters): ViewGraph {
     });
   const visible = new Set(nodes.map((n) => n.id));
   const edges = report.graph.edges.filter(
-    (edge) => filters.edgeKinds.has(edge.kind) && visible.has(edge.from) && visible.has(edge.to),
+    (edge) =>
+      filters.edgeKinds.has(edge.kind) &&
+      filters.evidence.has(edge.evidence) &&
+      visible.has(edge.from) &&
+      visible.has(edge.to),
   );
   if (!filters.hideIsolated) return { nodes, edges, hiddenIsolated: 0 };
   const connected = new Set(edges.flatMap((edge) => [edge.from, edge.to]));

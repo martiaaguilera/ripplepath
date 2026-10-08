@@ -121,6 +121,40 @@ impl Repo {
         Ok(listing)
     }
 
+    /// Looks up one path in `tree` without listing the whole tree. `None` when the path is absent
+    /// or names a directory. The path must already satisfy [`validate_repo_path`]; anything else
+    /// is treated as absent rather than looked up, so a caller cannot reach entries a listing
+    /// would have refused.
+    pub fn find_file(&self, tree: gix::ObjectId, path: &str) -> Result<Option<TreeFile>, GitError> {
+        if validate_repo_path(path.as_bytes()).as_deref() != Ok(path) {
+            return Ok(None);
+        }
+        // Walked by hand rather than with `lookup_entry`, which loads every intermediate object
+        // before checking that it is a tree: `big.bin/x` would inflate `big.bin` whatever its size.
+        let mut current = self.inner.find_tree(tree).map_err(|e| object_error(tree, e))?;
+        let mut components = path.split('/').peekable();
+        while let Some(component) = components.next() {
+            let Some(entry) = current.find_entry(component) else { return Ok(None) };
+            let (mode, oid) = (entry.mode(), entry.object_id());
+            if components.peek().is_some() {
+                if !mode.is_tree() {
+                    return Ok(None);
+                }
+                current = self.inner.find_tree(oid).map_err(|e| object_error(oid, e))?;
+                continue;
+            }
+            let kind = match mode.kind() {
+                gix::object::tree::EntryKind::Tree => return Ok(None),
+                gix::object::tree::EntryKind::Blob => EntryKind::File,
+                gix::object::tree::EntryKind::BlobExecutable => EntryKind::Executable,
+                gix::object::tree::EntryKind::Link => EntryKind::Symlink,
+                gix::object::tree::EntryKind::Commit => EntryKind::Submodule,
+            };
+            return Ok(Some(TreeFile { path: path.to_owned(), blob: oid, kind }));
+        }
+        Ok(None)
+    }
+
     /// Reads a blob as text, refusing anything above `max_bytes` *before* inflating it so that a
     /// repository bomb (a single multi-gigabyte blob) cannot exhaust memory.
     pub fn read_text(&self, blob: gix::ObjectId, max_bytes: u64) -> Result<BlobContent, GitError> {
