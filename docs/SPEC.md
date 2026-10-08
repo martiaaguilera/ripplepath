@@ -117,8 +117,22 @@ version ⇒ byte-identical JSON. `analysis.json` carries `schema_version`.
 - **Invariant**: after any sequence of index runs, stored rows equal a clean index of the final
   revision. `analyze --db` with a warm cache produces byte-identical output to a cold run.
 
-## 9. Planned sections
-Replay evaluation. Each will be specified here as it is implemented.
+## 9. Replay evaluation [implemented]
+`ripplepath evaluate --repo R --cases F --db D [--format json|text]`; details and measured results
+in docs/TEST_INTELLIGENCE.md §6.
+- A case is `base → head` plus the JUnit files of the run at head. Head must not be base or one of
+  its ancestors; a case without a JUnit file is an error.
+- **No temporal leakage**: the analysis of a case uses only coverage and CI results recorded at base
+  or its ancestors (`AnalyzeOptions::evidence_commits`); coverage is filtered before the latest
+  report per test is chosen. The head run is used only to score.
+- Per case and mode (conservative, balanced, fast_feedback): selected/total units, failing-test
+  recall (absent without failures), missed failures by id (unmapped failures are missed unless the
+  full suite runs), selected-test reduction, runtime reduction (only when every counted unit has a
+  recorded duration), first-failure position and cumulative recorded time, decision and fallback
+  reasons. Aggregates pool failures over cases and count `FULL_SUITE` fallbacks.
+- The report (`evaluation_schema_version: 1`) leads with the sample size; below 30 failing cases it
+  is labelled `small sample — not statistically meaningful`. No confidence figures. Deterministic.
+- Bounds: 10 000 cases, 1 000 JUnit files per case, 4 MiB cases file, 64 MiB per JUnit file, 512 MiB of JUnit in total.
 
 ## 10. Configuration [implemented]
 `ripplepath.yml` at the repository root; full schema in docs/ARCHITECTURE_RULES.md. Strict parsing

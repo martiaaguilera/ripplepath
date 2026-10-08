@@ -150,7 +150,128 @@ decide `FULL_SUITE` (`MIGRATION_CHANGED`); the TypeScript change only has medium
 only when **every** unit it counts has history; otherwise it is absent and a note says why. A unit
 selected twice (directly and through its container) counts once.
 
-## 6. Limitations
+## 6. Offline evaluation
+
+`ripplepath evaluate --repo R --cases cases.json --db D [--format json|text] [-o FILE]` replays
+historical changes and scores the selection each one *would* have received against the tests that
+actually failed. Ripplepath still runs no test: the outcomes are JUnit files produced elsewhere.
+
+```json
+{"cases": [{"name": "v4..v5", "base": "main~8", "head": "main~7", "junit": ["evidence/v5/junit/run-1.xml"]}]}
+```
+
+`junit` lists the result files of the run **at head** (paths relative to the cases file; several
+files are parts of one run, and a test listed twice failed if any entry failed). The database `D`
+holds whatever coverage and CI history was ingested over the whole history.
+
+### Leakage controls
+
+For case `base → head`, the analysis may only use evidence that existed before the change:
+
+- **Visible commits = base and its ancestors** (`git::Repo::ancestors`, gix object walk, refused
+  rather than truncated above 1 000 000 commits). Passed to the analysis as
+  `AnalyzeOptions::evidence_commits`.
+- **Coverage** is filtered *before* choosing the latest report per test
+  (`Store::latest_coverage_among`), so a newer report from head or later can neither be used nor
+  hide an older visible one.
+- **CI history** (flakiness, durations used for ordering) keeps only runs recorded at visible
+  commits.
+- A case whose head is base or one of its ancestors is refused (`HeadNotAfterBase`): its head
+  evidence would otherwise count as prior evidence. A case without a JUnit file is refused
+  (`NoObservedOutcome`).
+- The head run is used only to **score** (which tests failed, and their durations for the runtime
+  metrics), never as an input to the selection.
+
+The leakage test (`crates/engine/tests/evaluation.rs`,
+`evidence_recorded_at_head_or_later_cannot_affect_a_case`) evaluates `v4..v5` once with a database
+holding evidence up to v4 and once with one that also holds v5 (head) and v6 (later); the reports
+are byte-identical. Without the restriction the same database changes the decision
+(`STALE_COVERAGE` → `FULL_SUITE` in conservative mode), so the test is not vacuous.
+
+### Metrics
+
+Per case and mode, over test **units** (the same counting as `summary.tests_recommended`; a listed
+container contributes all its units, a `FULL_SUITE` decision runs every unit):
+
+| Metric | Definition |
+|---|---|
+| `failing_test_recall` | caught failing tests / failing tests; absent when nothing failed (never "100 %" by default) |
+| `missed_failures` | failing tests not in the selection, by id. A failure that maps to no test of head (`junit:<class>#<name>`) is missed unless the full suite runs |
+| `selected_test_reduction` | `1 − selected / total` units |
+| `runtime_reduction` | `1 − selected / full` recorded duration at head; present only when **every** counted unit has a recorded duration and the full duration is > 0 |
+| `first_failure_position` | 1-based position of the first failing test in run order (the analysis's ranking, then the rest on a full-suite decision) |
+| `time_to_first_failure_ms` | recorded durations summed up to and including that test; absent if one is unknown |
+| `decision`, `fallback_reasons` | what the analysis decided, and why |
+
+Aggregate per mode: failing tests and caught failures **pooled** over cases (recall = Σ caught / Σ
+failed), missed failures, failing cases fully caught, `FULL_SUITE` fallback count, mean selected-test
+and runtime reduction (with the number of cases that had one), mean first-failure position and time
+(over the cases that caught at least one failure). Ratios are rounded to four decimals.
+
+The report (`evaluation_schema_version: 1`) leads with the **sample**: cases, cases with a failing
+test, failing tests. Below 30 failing cases it carries `"small sample — not statistically
+meaningful"`. There are no confidence intervals or percentages of certainty: the numbers are counts
+over the cases given, nothing more. Same inputs ⇒ byte-identical JSON.
+
+### Results on `fixtures/eval-history`
+
+Eleven consecutive changes of an authored twelve-snapshot Java history, with **real** testwise
+JaCoCo coverage and JUnit results collected by running the tests at every snapshot
+(`fixtures/eval-history/evidence/README.md`: tools, versions, command, date). Each case sees the
+evidence of its base and every earlier snapshot.
+
+**Sample: 11 cases, 5 with failing tests, 15 failing tests — small sample, not statistically
+meaningful.**
+
+| Mode | Recall (pooled) | Missed | Failing cases fully caught | `FULL_SUITE` | Mean tests saved | Mean recorded runtime saved | Mean first failure |
+|---|---|---|---|---|---|---|---|
+| conservative | 10/15 (0.6667) | 5 | 4/5 | 0/11 | 0.6372 | 0.6346 (11 cases) | position 1.75, 14.0 ms (4 cases) |
+| balanced | 10/15 (0.6667) | 5 | 4/5 | 0/11 | 0.6372 | 0.6346 (11 cases) | position 1.75, 14.0 ms (4 cases) |
+| fast_feedback | 10/15 (0.6667) | 5 | 4/5 | 0/11 | 0.6372 | 0.6346 (11 cases) | position 1.75, 14.0 ms (4 cases) |
+
+The three modes coincide because no change in this history raised a fallback reason, and no change
+had more than 10 recommended tests for fast feedback to cut.
+
+| Case | What changed | Selected / total | Failed | Caught | First failure |
+|---|---|---|---|---|---|
+| v1..v2 | `Order.subtotal` rewritten with streams | 7 / 17 | 0 | – | – |
+| v2..v3 | `Money.percent` loses half-up rounding | 12 / 17 | 3 | 3 | #3, 13 ms |
+| v3..v4 | rounding fixed; `BulkDiscount` added | 15 / 20 | 0 | – | – |
+| v4..v5 | `BulkDiscount` threshold `>=` → `>` | 8 / 20 | 2 | 2 | #1, 12 ms |
+| v5..v6 | threshold fixed; `Inventory.reserve` refactored | 11 / 20 | 0 | – | – |
+| v6..v7 | `tax-rates.properties` gains `PT=23%` | 0 / 20 | 5 | **0** | – |
+| v7..v8 | `PT=23` | 0 / 20 | 0 | – | – |
+| v8..v9 | `Inventory.reserve` bounds broken | 7 / 20 | 4 | 4 | #1, 6 ms |
+| v9..v10 | bounds fixed; `CheckoutService.reserveStock` extracted | 7 / 20 | 0 | – | – |
+| v10..v11 | free-shipping threshold `>=` → `>` | 4 / 20 | 1 | 1 | #2, 25 ms |
+| v11..v12 | threshold fixed; `ShippingCalculatorTest` added | 6 / 22 | 0 | – | – |
+
+**Every missed failure is from v6..v7.** The change touches only `src/main/resources/tax-rates.properties`;
+`TaxCalculator.fromResource()` parses it at run time (`Integer.parseInt`), and the malformed `23%` makes
+`TaxCalculatorTest#loadsRatesFromResource` and four `CheckoutServiceTest` tests error. Ripplepath has
+no edge from Java code to a resource file it reads by name, the file matches no fallback pattern
+(`CONFIG_CHANGED` covers `application*.yml`, `.env*`, `config/`), and an unsupported file change is
+low severity and never widens the selection (§5). So the analysis selected nothing and decided
+`SELECTED` with no reason — the clearest gap this evaluation found. It is reported, not tuned away:
+changing a rule only to make this fixture score 100 % would measure nothing.
+
+Runtime figures are sums of single-run JUnit durations of a few milliseconds each, measured on one
+laptop; they vary between collections and say nothing about CI time on a real suite.
+
+### Limitations of the evaluation
+
+- **Authored history.** The fixture's regressions were written to exercise the tool, by the same
+  project; real histories have other failure modes (flaky tests, environment, data).
+- **Evidence at every base.** Each case assumes coverage and CI results were recorded at its base
+  commit; with sparser evidence, `STALE_COVERAGE` and other fallbacks would fire more often.
+- **Ingestion order.** Among visible reports for one test, the most recently *ingested* wins
+  (§7); ingest history oldest first.
+- **Unit-level counting.** Metrics count test units (methods); a selected test class counts as all
+  of its units.
+- **Durations at head.** Runtime and time-to-first-failure use the durations of the observed run at
+  head, as the best record of what running that selection would have cost.
+
+## 7. Limitations
 
 - **Correlation, not causation.** Coverage says a test executed a line, not that it checks its
   behaviour. A covered change can still break untested behaviour.
