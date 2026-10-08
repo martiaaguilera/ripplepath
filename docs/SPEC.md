@@ -199,3 +199,29 @@ same report.
 - The composite action (`action.yml`) runs `analyze --fail-on-policy`, publishes summary,
   annotations, artifact, optional SARIF and one PR comment (marker `<!-- ripplepath -->`), then
   exits 2 on policy `FAIL`. Details: docs/GITHUB_INTEGRATION.md.
+
+## 17. Local HTTP API and web UI [implemented]
+`ripplepath serve` binds one repository chosen at startup (default `127.0.0.1:7878`). Requests pick
+revisions, never repositories or working-tree paths. Every response carries a strict CSP,
+`nosniff` and `no-referrer`; a request whose `Host` is not a loopback name or an `--allow-host`
+value gets 403 (DNS rebinding).
+- `GET /api/v1/health`: tool and schema version, default base and head.
+- `GET /api/v1/analysis?base=B&head=H`: the `analysis.json` report, as `analyze` with the serve
+  database. Unknown revision → 404, a revision that is not a tree → 400. At most 2 run at once.
+- `GET /api/v1/file?rev=R&path=P`: one blob of a revision's tree, read from the object database,
+  never the working tree. `P` passes the validation every tree path of the analysis passes (UTF-8,
+  relative, no empty, `.` or `..` component, no `.git` component, no backslash or control
+  character; at most 4096 bytes). Only regular and executable files are returned (symlink and
+  submodule entries → 404). Content is `{"kind":"text","text":…}`, `{"kind":"binary"}`, or
+  `{"kind":"too_large","size":…}` above 1 MiB, the analysis's own parse bound. At most 8 reads run
+  at once, separately from analyses.
+
+The UI renders the report and never re-derives a decision: risk points, tiers, run order, fallback
+reasons, violation statuses and policy results are shown as reported; the UI only filters, groups
+and highlights. Navigation state lives in the URL (`base`, `head`, `view`, `sel`, `file`, `test`,
+`line`), so every view and selection is a shareable link. Views: change (verdict strip, changed
+files and symbols with coverage, impact graph, evidence inspector), diff (the report's own hunks
+laid out with context from `/api/v1/file`, each annotated with its containing symbols and what the
+report says about them), tests, risk & policy, architecture (layer diagram of head, base or the
+delta) and owners. Every graph finding also has a table or list. Repository text is rendered only
+as text nodes.

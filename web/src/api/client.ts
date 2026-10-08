@@ -1,4 +1,4 @@
-import { SUPPORTED_SCHEMA_VERSION, type AnalysisReport, type Health } from "./types";
+import { SUPPORTED_SCHEMA_VERSION, type AnalysisReport, type FileBlob, type Health } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -37,4 +37,26 @@ export async function fetchAnalysis(base: string, head: string, signal?: AbortSi
     );
   }
   return report;
+}
+
+// Blobs are immutable for a given commit, so a small cache makes flipping between files in the
+// diff view instant without any invalidation logic. Bounded: a long session must not hoard source.
+const FILE_CACHE_LIMIT = 48;
+const fileCache = new Map<string, Promise<FileBlob>>();
+
+/** One file of a revision. `rev` should be a commit or tree id so the result matches the report. */
+export function fetchFile(rev: string, path: string): Promise<FileBlob> {
+  const key = `${rev}\u0000${path}`;
+  const cached = fileCache.get(key);
+  if (cached) return cached;
+  const params = new URLSearchParams({ rev, path });
+  const request = getJson<FileBlob>(`/api/v1/file?${params.toString()}`);
+  fileCache.set(key, request);
+  // Failures are not cached: a transient error must not stick for the rest of the session.
+  request.catch(() => fileCache.delete(key));
+  if (fileCache.size > FILE_CACHE_LIMIT) {
+    const oldest = fileCache.keys().next();
+    if (!oldest.done) fileCache.delete(oldest.value);
+  }
+  return request;
 }

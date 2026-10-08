@@ -2,6 +2,51 @@
 
 Meaningful discoveries only, newest first.
 
+## 2026-10-08 — Web UI: six views over the report, diff endpoint, real screenshots
+
+**Unstyled is invisible to every gate.** The salvaged views typechecked, linted and built, yet about
+70 class names had no rule at all: the verdict strip rendered as one run-on line of links. Diffing
+the `className` tokens used in TSX against the selectors in `styles.css` found them; the screenshots
+against a real server are what made it obvious. Visual review is part of done for UI work.
+
+**Left-to-right does not fit a deep blast radius.** ELK's `LEFT` layering put the six levels of the
+java-banking change side by side; in the centre column `fitView` had to zoom to about 0.45 and
+labels were unreadable. Rows (`UP`: dependencies above dependents) use the width for the breadth of
+one level instead, at roughly 0.75. Relation labels on every edge piled up at crossings; they are
+now drawn only on the highlighted path and on aggregated edges, and the Edges tab keeps every
+relation as text.
+
+**Java method ids end in `)`.** The evidence-prose linker stripped trailing `)` before looking a
+token up, so `…#legacyBalance(String)` became `…#legacyBalance(String` and no method id in risk or
+policy evidence was ever a link. Punctuation is now peeled one character at a time and the longest
+core the report knows wins (`matchToken`), shared with the "risk signals naming this symbol" lookup.
+
+**Fonts can rewrite source.** Cascadia Code's ligatures drew `->` and `>=` as arrows in the diff.
+Ligatures are off for code, symbol and location text: source must look as written.
+
+**The React compiler lint treats anything passed to `ref=` as a ref.** The windowing hook returned
+`{ ref, start, end, … }`; passing `rows.ref` made every read of `rows.start` a "ref read during
+render" error. A callback ref (a state setter) destructured away from the plain numbers fixes it
+without disabling the rule.
+
+**Links must not lie.** The inspector opened the diff view for any edge's file; for an unchanged
+file the diff view fell back to the first changed file without saying so. Only changed files link
+now, and the line anchor is passed only for head-side symbols (diff anchors are head line numbers;
+deleted symbols and base-graph dependents have none).
+
+**Dark-mode accent contrast.** White on the dark accent (`#6c9bff`) is about 2.5:1. An
+`--on-accent` token (white in light, near-black in dark) keeps the button and skip link legible.
+
+**Measured hops need their own shape, not just a colour.** With the fixture's real JaCoCo reports
+ingested, container tests are recommended through one `TESTS`/`COVERAGE_OBSERVED` hop; drawn like a
+static call it read as code structure. Measured hops are dotted, square-marked and green in paths,
+legend and graph; static hops stay solid.
+
+**`/api/v1/file`** serves one blob of a revision for the diff view: object database only, the
+analysis's own path validation and 1 MiB bound, symlinks and submodules refused, eight concurrent
+reads separate from the two analysis slots (SPEC §17). The UI asks for resolved commit ids, not the
+specs, so a branch that moves mid-session cannot pair a diff with the wrong report.
+
 ## 2026-10-08 — Offline replay evaluation of test selection
 
 **Leakage is a property of the evidence query, not of the database.** The evaluation reuses one

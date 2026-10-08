@@ -84,6 +84,10 @@ enum Command {
         /// everything else is refused to block DNS-rebinding attacks from web pages.
         #[arg(long = "allow-host")]
         allowed_hosts: Vec<String>,
+        /// Index and evidence database [default: the per-repository file `ripplepath index` uses, if
+        /// it exists], so the UI shows the same coverage and CI evidence as `analyze`.
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Serve read-only Model Context Protocol tools over stdio for coding agents (one repository).
     Mcp {
@@ -460,7 +464,8 @@ fn run_other(command: Command) -> Result<(), String> {
             };
             write_output(&rendered, output.as_deref())
         }
-        Command::Serve { repo, addr, web_dir, base, head, allowed_hosts } => {
+        Command::Serve { repo, addr, web_dir, base, head, allowed_hosts, db } => {
+            let db = db.or_else(|| default_db(&repo).ok().filter(|db| db.is_file()));
             if !addr.ip().is_loopback() {
                 eprintln!("warning: listening on {addr}; anyone who can reach it can read analysed source metadata");
             }
@@ -481,6 +486,7 @@ fn run_other(command: Command) -> Result<(), String> {
                 default_base: base,
                 default_head: head,
                 allowed_hosts,
+                db,
             };
             let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
             runtime.block_on(ripplepath_server::serve(config)).map_err(|e| e.to_string())

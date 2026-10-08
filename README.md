@@ -70,6 +70,24 @@ cd web && npm ci && npm run build && cd ..
 # open http://127.0.0.1:7878
 ```
 
+## Web UI
+
+`ripplepath serve` hosts a local UI over the same report: what changed, what it reaches and why,
+which tests have evidence, how the risk score decomposes, and what moved in the architecture. Every
+value comes from `analysis.json`; the UI filters and highlights but decides nothing. Screenshots
+below are the java-banking demo (`ripplepath demo`) with the fixture's recorded coverage and CI
+results ingested, taken by `web/e2e/screenshots.spec.ts` against a running server.
+
+![Change view: verdict strip, changed symbols with coverage, impact graph and inspector](docs/assets/change-overview.png)
+
+| | |
+|---|---|
+| ![Explaining path of a test highlighted in the impact graph](docs/assets/blast-radius-path.png) | ![Test intelligence: decision, fallback reasons, ranked tests and a measured-coverage hop](docs/assets/test-evidence.png) |
+| ![Architecture drift: the new domain → api dependency down to Account.java:25](docs/assets/architecture-drift.png) | ![Risk decomposition: value, units, weight, cap and points per signal](docs/assets/risk-decomposition.png) |
+
+Keyboard: `1`–`6` switch views, `/` finds a symbol, `Esc` clears the selection, arrow keys and
+Enter walk the graph's node list.
+
 ## For coding agents (MCP)
 
 `ripplepath mcp --repo .` serves read-only [Model Context Protocol](https://modelcontextprotocol.io)
