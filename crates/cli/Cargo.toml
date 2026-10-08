@@ -16,6 +16,7 @@ blake3.workspace = true
 ripplepath-core.workspace = true
 ripplepath-engine.workspace = true
 ripplepath-graph.workspace = true
+ripplepath-mcp.workspace = true
 ripplepath-server.workspace = true
 clap.workspace = true
 serde_json.workspace = true

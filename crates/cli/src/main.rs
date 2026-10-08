@@ -60,6 +60,20 @@ enum Command {
         #[arg(long = "allow-host")]
         allowed_hosts: Vec<String>,
     },
+    /// Serve read-only Model Context Protocol tools over stdio for coding agents (one repository).
+    Mcp {
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        /// Index and evidence database [default: the per-repository file `ripplepath index` uses, if it
+        /// exists].
+        #[arg(long)]
+        db: Option<PathBuf>,
+        /// Revisions used when a tool call omits them.
+        #[arg(long, default_value = "HEAD~1")]
+        base: String,
+        #[arg(long, default_value = "HEAD")]
+        head: String,
+    },
     /// Architecture rules of one revision.
     #[command(subcommand)]
     Architecture(ArchitectureCommand),
@@ -415,6 +429,15 @@ fn run_other(command: Command) -> Result<(), String> {
             };
             let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
             runtime.block_on(ripplepath_server::serve(config)).map_err(|e| e.to_string())
+        }
+        Command::Mcp { repo, db, base, head } => {
+            let db = match db {
+                Some(db) => Some(db),
+                None => default_db(&repo).ok().filter(|db| db.is_file()),
+            };
+            let config = ripplepath_mcp::McpConfig { repo, db, default_base: base, default_head: head };
+            // stdout carries protocol messages only; diagnostics go to stderr through tracing.
+            ripplepath_mcp::serve(config, std::io::stdin().lock(), std::io::stdout().lock()).map_err(|e| e.to_string())
         }
         Command::Demo { dir, fixture, format } => {
             if dir.exists() {
