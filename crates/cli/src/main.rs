@@ -72,9 +72,12 @@ enum Command {
         /// Address to bind. Binding beyond localhost exposes source code to the network.
         #[arg(long, default_value = "127.0.0.1:7878")]
         addr: std::net::SocketAddr,
-        /// Built web UI directory.
-        #[arg(long, default_value = "web/dist")]
-        web_dir: PathBuf,
+        /// Built web UI directory [default: `web/dist` of the source tree this binary was built
+        /// from]. Never resolved against the current directory: `ripplepath serve` run inside a
+        /// project with its own `web/dist` would otherwise serve that project's scripts as the UI,
+        /// on the same origin as the API.
+        #[arg(long)]
+        web_dir: Option<PathBuf>,
         /// Revisions the UI opens with.
         #[arg(long, default_value = "HEAD~1")]
         base: String,
@@ -491,6 +494,7 @@ fn run_other(command: Command) -> Result<(), String> {
             if !addr.ip().is_loopback() {
                 eprintln!("warning: listening on {addr}; anyone who can reach it can read analysed source metadata");
             }
+            let web_dir = web_dir.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/dist"));
             let web_dir = if web_dir.join("index.html").is_file() {
                 Some(web_dir)
             } else {
