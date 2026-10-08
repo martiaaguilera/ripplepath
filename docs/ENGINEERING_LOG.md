@@ -2,6 +2,27 @@
 
 Meaningful discoveries only, newest first.
 
+## 2026-10-08 — Session 4: real test evidence for the fixtures
+
+**Evidence is collected, not written.** `scripts/collect-evidence-{java,ts}.sh` compile and run
+only Ripplepath's own fixtures (JUnit Platform 6.1.3 + JaCoCo 0.8.15 without Maven; Vitest 5.0.3
+with V8 coverage), one test class/file per run for testwise coverage. The only edits are removing
+machine-identifying values (JVM system properties, host names). A deliberately random TypeScript
+test recorded a real same-commit flip: 4 failures in 8 runs at v1, 0 in 4 at v2 → `FLAKY`.
+
+**Real output found three wrong answers that synthetic samples did not.**
+(1) JaCoCo lists interfaces with zero lines; counting them as "measured" made every interface
+method `NOT_COVERED`. Files without executable lines no longer count as measured.
+(2) A deleted method got `NOT_COVERED` from head-side coverage — trivially true, since the code is
+gone. Deleted symbols now use only reports measured at the base commit.
+(3) Testwise coverage is per test class/file, so its `TESTS` hop lands on the container; the
+container was then dropped because a unit was already listed on static evidence, and the
+TypeScript report showed no measured evidence at all. Containers with a coverage hop are kept.
+
+**Formats matched the mapping.** Vitest's JUnit `classname` is the test file and `name` the
+`describe > title` chain, exactly the TS test id; JUnit Platform's `classname`/`method()` match the
+Java id. Every recorded result maps (0 unmapped). Vitest's LCOV on Windows uses backslashes.
+
 ## 2026-10-07 — Session 3: persistent incremental index
 
 **Incremental facts, recomputed resolution.** Resolution depends on every file's imports, so the

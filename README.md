@@ -8,9 +8,10 @@ radius, and what it could not determine.
 
 > **Status: early development.** Works end to end for **Java** and **TypeScript/JavaScript**: Git
 > diff → symbol-level change set → evidence-backed impact paths → static test recommendations →
-> CLI, JSON, local API and web UI. Coverage/JUnit ingestion, architecture rules, the risk model,
-> incremental persistence and the GitHub Action are planned and not yet implemented. Nothing below
-> claims otherwise.
+> CLI, JSON, local API and web UI, with a persistent incremental index and optional ingestion of
+> JaCoCo/LCOV/JUnit evidence (coverage edges, flakiness, selection modes; see
+> [docs/TEST_INTELLIGENCE.md](docs/TEST_INTELLIGENCE.md)). Architecture rules, the risk model and
+> the GitHub Action are planned and not yet implemented. Nothing below claims otherwise.
 
 ## What it does today
 
@@ -93,9 +94,8 @@ Details: [docs/SPEC.md](docs/SPEC.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.
 
 ## Roadmap (not implemented yet)
 
-JaCoCo/LCOV/JUnit evidence · test ranking modes with safe
-fallback · architecture rules and base/head drift · versioned deterministic risk decomposition ·
-GitHub Action with step summary and SARIF · flakiness and offline selection evaluation ·
+Architecture rules and base/head drift · versioned deterministic risk decomposition ·
+GitHub Action with step summary and SARIF · offline selection evaluation ·
 benchmarks · read-only MCP server.
 
 ## Author

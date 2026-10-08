@@ -6,7 +6,7 @@ Status markers: **[implemented]**, **[partial]**, **[planned]**. Only implemente
 - A Git repository (read through the object database; the working tree is not traversed in revision mode).
 - `base` and `head` revisions (any revspec gix can resolve: branch, tag, SHA, `HEAD~1`).
 - Optional `ripplepath.yml` [planned].
-- Optional evidence files: JaCoCo XML, LCOV, JUnit XML [planned].
+- Optional evidence files: JaCoCo XML, LCOV, JUnit XML [implemented; see docs/TEST_INTELLIGENCE.md].
 
 ## 2. Symbols [implemented for Java]
 A symbol is a named program element with a **stable identity**:
@@ -69,7 +69,7 @@ Edges are directed `from → to` meaning *from depends on to*. Each edge carries
 | `CALLS` | method/ctor → method/ctor it invokes |
 | `INSTANTIATES` | method/ctor → constructor or type created with `new` |
 | `REFERENCES` | member → type it mentions (field type, parameter, return, local variable, cast…) |
-| `TESTS` | test → symbol, evidence-qualified [planned beyond static] |
+| `TESTS` | test → symbol it executed, from testwise coverage (`COVERAGE_OBSERVED`) [implemented] |
 
 Evidence classes, strongest first: `RESOLVED_EXACT`, `COVERAGE_OBSERVED`, `STATIC_INFERRED`,
 `HISTORY_COCHANGE`, `NAMING_HEURISTIC`. They are ordinal labels, **not probabilities**.
@@ -90,13 +90,17 @@ Starting from changed symbols, traverse dependents:
 Collections that are serialized are `BTreeMap`/sorted `Vec`. Same repo + revisions + config + tool
 version ⇒ byte-identical JSON. `analysis.json` carries `schema_version`.
 
-## 7. Test recommendations [implemented, static evidence only]
+## 7. Test recommendations [implemented]
 - A test unit is recommended when it changed (`CHANGED_TEST`) or is impacted (`STATIC_PATH`).
 - A test container is recommended when its own code changed, when a non-test symbol inside it
-  (lifecycle hook, fixture, helper) changed or is impacted, or when it is impacted and none of its
-  units is listed.
-- `summary.tests_recommended` counts test *units* selected: listed units plus all units inside a
-  listed container; `summary.tests_total` counts all test units in head.
+  (lifecycle hook, fixture, helper) changed or is impacted, when it is impacted through a measured
+  coverage hop (testwise coverage is recorded per container), or when it is impacted and none of
+  its units is listed.
+- With an evidence database, coverage adds `TESTS`/`COVERAGE_OBSERVED` edges, coverage status,
+  history/flakiness, evidence tiers, selection modes and fallback reasons: docs/TEST_INTELLIGENCE.md.
+- `summary.tests_recommended` counts test *units* the selection runs: listed units plus all units
+  inside a listed container, each once — or every unit on a `FULL_SUITE` decision;
+  `summary.tests_total` counts all test units in head.
 
 ## 8. Persistent incremental index [implemented]
 - `ripplepath index --rev R` stores the graph of R in SQLite, by default in the user cache directory
@@ -107,6 +111,6 @@ version ⇒ byte-identical JSON. `analysis.json` carries `schema_version`.
 - **Invariant**: after any sequence of index runs, stored rows equal a clean index of the final
   revision. `analyze --db` with a warm cache produces byte-identical output to a cold run.
 
-## 9. Planned sections, test evidence and ranking, fallback rules,
-architecture rules and delta, risk model v1, GitHub Action, history/flakiness, replay evaluation.
+## 9. Planned sections
+Architecture rules and delta, risk model v1, GitHub Action, replay evaluation.
 Each will be specified here as it is implemented.
