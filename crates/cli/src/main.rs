@@ -262,7 +262,16 @@ enum Outcome {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    // clap exits with status 2 on a usage error, which is the policy-FAIL status: a CI job with a
+    // misspelled `--mode` would then look like a policy failure (or pass, with fail-on-policy
+    // off) without any analysis having run. Usage errors are ordinary errors here.
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            let _ = error.print();
+            return if error.use_stderr() { ExitCode::FAILURE } else { ExitCode::SUCCESS };
+        }
+    };
     init_tracing(cli.verbose);
     match run(cli.command) {
         Ok(Outcome::Done) => ExitCode::SUCCESS,
@@ -532,11 +541,21 @@ fn run_other(command: Command) -> Result<(), String> {
 
 /// Evidence files come from CI artifacts; bounded before parsing.
 fn read_input(path: &Path) -> Result<String, String> {
-    let size = std::fs::metadata(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?.len();
-    if size > ripplepath_evidence_limit() {
+    use std::io::Read;
+    let error = |e: std::io::Error| format!("cannot read {}: {e}", path.display());
+    let limit = ripplepath_evidence_limit();
+    let size = std::fs::metadata(path).map_err(error)?.len();
+    if size > limit {
         return Err(format!("{} is {size} bytes, above the input limit", path.display()));
     }
-    std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))
+    // The metadata size of a pipe or device (`/dev/zero`, a FIFO) is 0; the read itself is bounded
+    // too so such an input cannot grow memory without limit.
+    let mut text = String::new();
+    std::fs::File::open(path).map_err(error)?.take(limit + 1).read_to_string(&mut text).map_err(error)?;
+    if text.len() as u64 > limit {
+        return Err(format!("{} is above the {limit} byte input limit", path.display()));
+    }
+    Ok(text)
 }
 
 fn ripplepath_evidence_limit() -> u64 {
