@@ -38,6 +38,10 @@ export type SymbolKind =
 
 export type ChangeKind = "ADDED" | "DELETED" | "MODIFIED" | "SIGNATURE_CHANGED";
 
+export type Language = "java" | "typescript" | "javascript";
+
+export type Visibility = "public" | "protected" | "package" | "private";
+
 export interface Span {
   start_line: number;
   end_line: number;
@@ -77,6 +81,14 @@ export interface Summary {
   max_depth: number;
 }
 
+export type FileStatus = "ADDED" | "DELETED" | "MODIFIED" | "RENAMED";
+
+/** High-impact non-code surface recognised by path. */
+export type FileCategory = "MIGRATION" | "LOCKFILE" | "BUILD" | "CI" | "CONTAINER" | "CONFIG";
+
+/** Measured coverage of a symbol, from the latest ingested reports. */
+export type CoverageStatus = "COVERED" | "NOT_COVERED" | "NO_DATA";
+
 export interface HunkReport {
   old_start: number;
   old_len: number;
@@ -89,9 +101,10 @@ export interface HunkReport {
 export interface FileChange {
   path: string;
   old_path: string | null;
-  status: "ADDED" | "DELETED" | "MODIFIED" | "RENAMED";
+  status: FileStatus;
   similarity: number | null;
-  language: "java" | "typescript" | "javascript" | null;
+  language: Language | null;
+  category: FileCategory | null;
   hunks: HunkReport[];
 }
 
@@ -102,13 +115,17 @@ export interface ChangedSymbol {
   probable_move: string | null;
   kind: SymbolKind;
   name: string;
-  language: "java" | "typescript" | "javascript";
+  language: Language;
   module: string;
   file: string;
   span: Span;
-  visibility: "public" | "protected" | "package" | "private";
+  visibility: Visibility;
   is_test: boolean;
+  /** `null` when no coverage was ingested or the symbol has no executable code. */
+  coverage: CoverageStatus | null;
 }
+
+export type GraphSide = "head" | "base";
 
 export interface ImpactedSymbol {
   id: string;
@@ -121,31 +138,98 @@ export interface ImpactedSymbol {
   depth: number;
   root: string;
   weakest_evidence: Evidence;
-  graph: "head" | "base";
+  graph: GraphSide;
   path: Hop[];
+  coverage: CoverageStatus | null;
+}
+
+export type TestReason = "CHANGED_TEST" | "STATIC_PATH";
+
+/** Ordinal strength of the evidence that a test exercises the change. Not a probability. */
+export type EvidenceTier = "STRONG" | "MEDIUM" | "WEAK";
+
+export type Reliability = "STABLE" | "FLAKY" | "CONSISTENTLY_FAILING" | "INSUFFICIENT_DATA";
+
+export interface TestHistory {
+  runs: number;
+  failures: number;
+  flaky_commits: number;
+  median_duration_ms: number | null;
+  last_outcome: string | null;
+  reliability: Reliability;
 }
 
 export interface TestRecommendation {
   id: string;
   name: string;
   file: string;
-  reason: "CHANGED_TEST" | "STATIC_PATH";
+  reason: TestReason;
   depth: number;
   root: string;
   weakest_evidence: Evidence;
   path: Hop[];
+  tier: EvidenceTier;
+  /** A hop of the path is measured coverage (`TESTS` with `COVERAGE_OBSERVED`). */
+  coverage_observed: boolean;
+  history: TestHistory | null;
 }
+
+export type SelectionDecision = "SELECTED" | "FULL_SUITE";
 
 export type Severity = "high" | "medium" | "low";
 
+export interface FallbackReason {
+  severity: Severity;
+  code: string;
+  detail: string;
+}
+
+export interface TestSelection {
+  mode: SelectionMode;
+  decision: SelectionDecision;
+  fallback_reasons: FallbackReason[];
+  /** Recommended test ids in run order. */
+  ordered: string[];
+  selected_units: number;
+  total_units: number;
+  /** Present only when every counted unit has recorded history. */
+  selected_runtime_ms: number | null;
+  full_runtime_ms: number | null;
+  notes: string[];
+}
+
+export interface EvidenceSummary {
+  coverage_reports: number;
+  coverage_reports_other_commits: number;
+  coverage_edges: number;
+  test_runs: number;
+  tests_with_history: number;
+}
+
+export type UncertaintyKind =
+  | "SYNTAX_ERROR"
+  | "PARSE_FAILURE"
+  | "FILE_TOO_LARGE"
+  | "BINARY_FILE"
+  | "UNSUPPORTED_LANGUAGE"
+  | "UNRESOLVED_REFERENCE"
+  | "REJECTED_PATH"
+  | "RENAME_DETECTION_SKIPPED"
+  | "IMPACT_TRUNCATED"
+  | "STALE_COVERAGE"
+  | "SYMLINK_OR_SUBMODULE"
+  | "EXCLUDED_FILE";
+
 export interface Uncertainty {
   severity: Severity;
-  kind: string;
+  kind: UncertaintyKind;
   file: string | null;
   line: number | null;
   symbol: string | null;
   detail: string;
 }
+
+export type NodeRole = "changed" | "impacted";
 
 export interface GraphNode {
   id: string;
@@ -154,7 +238,7 @@ export interface GraphNode {
   module: string;
   file: string;
   line: number;
-  role: "changed" | "impacted";
+  role: NodeRole;
   change: ChangeKind | null;
   depth: number;
   is_test: boolean;
@@ -178,6 +262,8 @@ export interface AnalysisReport {
   impacted_symbols: ImpactedSymbol[];
   tests: TestRecommendation[];
   uncertainty: Uncertainty[];
+  test_selection: TestSelection;
+  evidence: EvidenceSummary;
   graph: GraphSlice;
   config: ConfigReport;
   architecture: ArchitectureReport;
@@ -315,7 +401,7 @@ export interface ApiChange {
   id: string;
   previous_id: string | null;
   symbol_kind: SymbolKind;
-  language: "java" | "typescript" | "javascript";
+  language: Language;
   file: string;
   line: number;
 }
@@ -382,6 +468,19 @@ export interface PolicyReport {
   result: "PASS" | "WARN" | "FAIL";
   gates: GateResult[];
   note: string;
+}
+
+// ---- GET /api/v1/file (crates/server): one blob of an analysed revision ----
+
+export type FileContent = { kind: "text"; text: string } | { kind: "binary" } | { kind: "too_large"; size: number };
+
+export interface FileBlob {
+  rev: string;
+  commit: string | null;
+  path: string;
+  blob: string;
+  max_bytes: number;
+  content: FileContent;
 }
 
 export interface Health {

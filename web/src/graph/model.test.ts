@@ -1,8 +1,16 @@
 import { CONTROLLER, FEE_DECL, FEE_IMPL, SERVICE, TEST, sampleReport } from "../test/fixtures";
-import { IMPACT_EDGE_KINDS, buildView, edgeKey, explainingPath, highlightFor, shortLabel } from "./model";
+import {
+  EVIDENCE_CLASSES,
+  IMPACT_EDGE_KINDS,
+  buildView,
+  edgeKey,
+  explainingPath,
+  highlightFor,
+  shortLabel,
+} from "./model";
 
 const allKinds = new Set(IMPACT_EDGE_KINDS);
-const base = { edgeKinds: allKinds, query: "", hideIsolated: false };
+const base = { edgeKinds: allKinds, evidence: new Set(EVIDENCE_CLASSES), query: "", hideIsolated: false };
 
 describe("shortLabel", () => {
   it("shortens qualified ids to owner.member", () => {
@@ -26,6 +34,11 @@ describe("buildView", () => {
     const view = buildView(sampleReport(), { ...base, maxDepth: 10, edgeKinds: new Set(["CALLS"]) });
     expect(view.nodes).toHaveLength(5);
     expect(view.edges.map((e) => e.kind)).toEqual(["CALLS", "CALLS", "CALLS"]);
+  });
+
+  it("filters edges by evidence class", () => {
+    const view = buildView(sampleReport(), { ...base, maxDepth: 10, evidence: new Set(["STATIC_INFERRED"]) });
+    expect(view.edges.map((e) => [e.from, e.to])).toEqual([[CONTROLLER, SERVICE]]);
   });
 
   it("hides isolated nodes on request and reports how many", () => {

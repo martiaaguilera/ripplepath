@@ -1,49 +1,15 @@
-import type { AnalysisReport, ChangeKind, Severity } from "../api/types";
-import { EVIDENCE_LABEL, shortLabel } from "../graph/model";
+import type { AnalysisReport, ChangeKind, TestRecommendation } from "../api/types";
+import { indexReport } from "../app/reportIndex";
+import { shortLabel } from "../graph/model";
+import { CoverageBadge, EvidenceBadge, Location, SeverityBadge, TierBadge, humanize } from "./common";
 import { EvidencePath } from "./EvidencePath";
 
-const CHANGE_LABEL: Record<ChangeKind, string> = {
+export const CHANGE_LABEL: Record<ChangeKind, string> = {
   ADDED: "added",
   DELETED: "deleted",
   MODIFIED: "modified",
   SIGNATURE_CHANGED: "signature",
 };
-
-export function SummaryBar({ report }: { report: AnalysisReport }) {
-  const s = report.summary;
-  const bySeverity = (severity: Severity) => report.uncertainty.filter((u) => u.severity === severity).length;
-  const high = bySeverity("high");
-  const items: { label: string; value: string; detail?: string; tone?: string }[] = [
-    { label: "Changed symbols", value: String(s.symbols_changed), detail: `${s.files_changed} files` },
-    {
-      label: "Blast radius",
-      value: String(s.symbols_impacted),
-      detail: `${s.modules_impacted} modules · depth ≤ ${s.max_depth}${s.impact_truncated ? " · truncated" : ""}`,
-    },
-    {
-      label: "Recommended tests",
-      value: `${s.tests_recommended} / ${s.tests_total}`,
-      detail: "static evidence",
-    },
-    {
-      label: "Uncertainty",
-      value: String(s.uncertainty_items),
-      detail: `${high} high · ${bySeverity("medium")} medium · ${bySeverity("low")} low`,
-      ...(high > 0 ? { tone: "warn" } : {}),
-    },
-  ];
-  return (
-    <section className="summary" aria-label="Summary">
-      {items.map((item) => (
-        <div key={item.label} className={`summary__item ${item.tone ? `summary__item--${item.tone}` : ""}`}>
-          <span className="summary__label">{item.label}</span>
-          <span className="summary__value">{item.value}</span>
-          {item.detail && <span className="summary__detail">{item.detail}</span>}
-        </div>
-      ))}
-    </section>
-  );
-}
 
 interface ListProps {
   report: AnalysisReport;
@@ -51,7 +17,16 @@ interface ListProps {
   onSelectSymbol: (id: string) => void;
 }
 
-export function ChangedList({ report, selectedId, onSelectSymbol }: ListProps) {
+function fileName(path: string): string {
+  return path.split("/").pop() ?? path;
+}
+
+export function ChangedList({
+  report,
+  selectedId,
+  onSelectSymbol,
+  onOpenFile,
+}: ListProps & { onOpenFile: (path: string) => void }) {
   const byFile = new Map<string, AnalysisReport["changed_symbols"]>();
   for (const symbol of report.changed_symbols) {
     if (symbol.kind === "file") continue;
@@ -59,42 +34,71 @@ export function ChangedList({ report, selectedId, onSelectSymbol }: ListProps) {
     list.push(symbol);
     byFile.set(symbol.file, list);
   }
-  const unanalysed = report.files.filter((f) => f.language === null);
+  const files = indexReport(report).files;
+  const unanalysed = report.files.filter((f) => !byFile.has(f.path));
   return (
-    <nav className="changed" aria-label="Changed symbols">
-      <h2 className="panel-title">Changed</h2>
-      {[...byFile.entries()].map(([file, symbols]) => (
-        <section key={file} className="changed__file">
-          <h3 className="changed__path" title={file}>
-            {file.split("/").pop()}
-          </h3>
-          <ul className="plain-list">
-            {symbols.map((symbol) => (
-              <li key={symbol.id}>
-                <button
-                  type="button"
-                  className={`changed__item ${selectedId === symbol.id ? "is-selected" : ""}`}
-                  onClick={() => onSelectSymbol(symbol.id)}
-                  aria-pressed={selectedId === symbol.id}
-                  title={symbol.id}
-                >
-                  <span className={`badge badge--${symbol.change.toLowerCase()}`}>{CHANGE_LABEL[symbol.change]}</span>
-                  <span className="changed__name">{shortLabel(symbol.id)}</span>
-                  {symbol.is_test && <span className="badge badge--test">test</span>}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
+    <nav className="changed" aria-label="Changed files and symbols">
+      <h2 className="panel-title">
+        Changed <span className="count">{report.summary.files_changed} files</span>
+      </h2>
+      {[...byFile.entries()].map(([path, symbols]) => {
+        const file = files.get(path);
+        return (
+          <section key={path} className="changed__file" aria-label={path}>
+            <h3 className="changed__path">
+              <button
+                type="button"
+                className="link changed__open"
+                title={`${path} — open the diff`}
+                onClick={() => {
+                  onOpenFile(path);
+                }}
+              >
+                {fileName(path)}
+              </button>
+              {file?.category && <span className="badge badge--category">{file.category.toLowerCase()}</span>}
+            </h3>
+            <ul className="plain-list">
+              {symbols.map((symbol) => (
+                <li key={symbol.id}>
+                  <button
+                    type="button"
+                    className={`changed__item ${selectedId === symbol.id ? "is-selected" : ""}`}
+                    onClick={() => {
+                      onSelectSymbol(symbol.id);
+                    }}
+                    aria-pressed={selectedId === symbol.id}
+                    title={symbol.id}
+                  >
+                    <span className={`badge badge--${symbol.change.toLowerCase()}`}>{CHANGE_LABEL[symbol.change]}</span>
+                    <span className="changed__name">{shortLabel(symbol.id)}</span>
+                    {symbol.is_test && <span className="badge badge--test">test</span>}
+                    <CoverageBadge status={symbol.coverage} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
       {unanalysed.length > 0 && (
-        <section className="changed__file">
-          <h3 className="changed__path">Not analysed</h3>
+        <section className="changed__file" aria-label="Files without changed symbols">
+          <h3 className="changed__path changed__path--muted">No symbols traced</h3>
           <ul className="plain-list">
             {unanalysed.map((file) => (
-              <li key={file.path} className="changed__unanalysed" title={file.path}>
-                <span className={`badge badge--${file.status.toLowerCase()}`}>{file.status.toLowerCase()}</span>
-                <span className="changed__name">{file.path.split("/").pop()}</span>
+              <li key={file.path}>
+                <button
+                  type="button"
+                  className="changed__item changed__item--file"
+                  title={`${file.path} — open the diff`}
+                  onClick={() => {
+                    onOpenFile(file.path);
+                  }}
+                >
+                  <span className={`badge badge--${file.status.toLowerCase()}`}>{file.status.toLowerCase()}</span>
+                  <span className="changed__name">{fileName(file.path)}</span>
+                  {file.category && <span className="badge badge--category">{file.category.toLowerCase()}</span>}
+                </button>
               </li>
             ))}
           </ul>
@@ -104,38 +108,47 @@ export function ChangedList({ report, selectedId, onSelectSymbol }: ListProps) {
   );
 }
 
+/** Tests in the selection's run order; anything not in `ordered` follows in report order. */
+export function orderedTests(report: AnalysisReport): TestRecommendation[] {
+  const byId = indexReport(report).tests;
+  const ordered = report.test_selection.ordered.flatMap((id) => {
+    const test = byId.get(id);
+    return test ? [test] : [];
+  });
+  const seen = new Set(ordered.map((t) => t.id));
+  return [...ordered, ...report.tests.filter((t) => !seen.has(t.id))];
+}
+
+export function evidenceKind(test: TestRecommendation): string {
+  if (test.reason === "CHANGED_TEST") return "changed test";
+  return test.coverage_observed ? "measured coverage" : "static path";
+}
+
 export function TestsPanel({ report, selectedId, onSelectSymbol }: ListProps) {
   if (report.tests.length === 0) {
     return (
       <p className="muted">
-        No test has a static dependency path to this change. That is a gap in evidence, not a sign the change is safe.
+        No test has a dependency path to this change. That is a gap in evidence, not a sign the change is safe.
       </p>
     );
   }
   return (
     <>
       <p className="note">
-        Recommended first tests, ordered by evidence. Static paths show that a test <em>can</em> reach the change; they
-        do not prove it does, and passing them does not make the change safe to merge.
+        Run order from the test selection. A static path shows a test <em>can</em> reach the change; measured coverage
+        shows it executed it. Neither makes the change safe to merge.
       </p>
       <ol className="tests">
-        {report.tests.map((test, index) => (
+        {orderedTests(report).map((test, index) => (
           <li key={test.id} className={`tests__item ${selectedId === test.id ? "is-selected" : ""}`}>
             <div className="tests__header">
               <span className="tests__rank">{index + 1}</span>
               <button type="button" className="link tests__name" onClick={() => onSelectSymbol(test.id)} title={test.id}>
                 {shortLabel(test.id)}
               </button>
-              {test.reason === "CHANGED_TEST" ? (
-                <span className="badge badge--modified">test changed</span>
-              ) : (
-                <>
-                  <span className="badge badge--neutral">depth {test.depth}</span>
-                  <span className={`evidence evidence--${test.weakest_evidence.toLowerCase()}`}>
-                    {EVIDENCE_LABEL[test.weakest_evidence].toLowerCase()}
-                  </span>
-                </>
-              )}
+              <TierBadge tier={test.tier} />
+              <span className={`evkind evkind--${evidenceKind(test).replace(" ", "-")}`}>{evidenceKind(test)}</span>
+              {test.reason === "STATIC_PATH" && <EvidenceBadge evidence={test.weakest_evidence} prefix="weakest: " />}
             </div>
             {test.reason === "STATIC_PATH" && (
               <EvidencePath root={test.root} hops={test.path} onSelectSymbol={onSelectSymbol} />
@@ -148,43 +161,58 @@ export function TestsPanel({ report, selectedId, onSelectSymbol }: ListProps) {
 }
 
 export function ImpactTable({ report, selectedId, onSelectSymbol }: ListProps) {
+  if (report.impacted_symbols.length === 0) {
+    return <p className="muted">No symbol depends on the changed code through a propagating edge.</p>;
+  }
   return (
-    <table className="table">
-      <caption className="sr-only">Impacted symbols with depth and weakest evidence on their explaining path</caption>
-      <thead>
-        <tr>
-          <th scope="col">Symbol</th>
-          <th scope="col">Depth</th>
-          <th scope="col">Weakest evidence</th>
-          <th scope="col">Via</th>
-          <th scope="col">Location</th>
-        </tr>
-      </thead>
-      <tbody>
-        {report.impacted_symbols.map((symbol) => (
-          <tr key={symbol.id} className={selectedId === symbol.id ? "is-selected" : ""}>
-            <td>
-              <button type="button" className="link" onClick={() => onSelectSymbol(symbol.id)} title={symbol.id}>
-                {shortLabel(symbol.id)}
-              </button>
-              {symbol.is_test && <span className="badge badge--test">test</span>}
-            </td>
-            <td className="num">{symbol.depth}</td>
-            <td>
-              <span className={`evidence evidence--${symbol.weakest_evidence.toLowerCase()}`}>
-                {EVIDENCE_LABEL[symbol.weakest_evidence].toLowerCase()}
-              </span>
-            </td>
-            <td>{symbol.path[symbol.path.length - 1]?.via_dispatch ? "dispatch" : symbol.path[symbol.path.length - 1]?.edge.kind.toLowerCase()}</td>
-            <td>
-              <code>
-                {symbol.file}:{symbol.span.start_line}
-              </code>
-            </td>
+    <div className="table-wrap">
+      <table className="table">
+        <caption className="sr-only">Impacted symbols with depth and weakest evidence on their explaining path</caption>
+        <thead>
+          <tr>
+            <th scope="col">Symbol</th>
+            <th scope="col" className="num">
+              Depth
+            </th>
+            <th scope="col">Weakest evidence</th>
+            <th scope="col">Via</th>
+            <th scope="col">Coverage</th>
+            <th scope="col">Location</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {report.impacted_symbols.map((symbol) => {
+            const last = symbol.path[symbol.path.length - 1];
+            return (
+              <tr key={symbol.id} className={selectedId === symbol.id ? "is-selected" : ""}>
+                <td>
+                  <button type="button" className="link sym" onClick={() => onSelectSymbol(symbol.id)} title={symbol.id}>
+                    {shortLabel(symbol.id)}
+                  </button>
+                  {symbol.is_test && <span className="badge badge--test">test</span>}
+                  {symbol.graph === "base" && (
+                    <span className="badge badge--neutral" title="Explained through the base revision's graph">
+                      via base
+                    </span>
+                  )}
+                </td>
+                <td className="num">{symbol.depth}</td>
+                <td>
+                  <EvidenceBadge evidence={symbol.weakest_evidence} />
+                </td>
+                <td>{last ? (last.via_dispatch ? "dispatch" : last.edge.kind.toLowerCase()) : "—"}</td>
+                <td>
+                  <CoverageBadge status={symbol.coverage} />
+                </td>
+                <td>
+                  <Location file={symbol.file} line={symbol.span.start_line} />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -196,14 +224,9 @@ export function UncertaintyPanel({ report }: { report: AnalysisReport }) {
     <ul className="uncertainty">
       {report.uncertainty.map((item) => (
         <li key={`${item.kind}|${item.file ?? ""}|${item.line ?? 0}|${item.detail}`} className="uncertainty__item">
-          <span className={`severity severity--${item.severity}`}>{item.severity}</span>
-          <span className="uncertainty__kind">{item.kind.replaceAll("_", " ").toLowerCase()}</span>
-          {item.file && (
-            <code>
-              {item.file}
-              {item.line !== null ? `:${item.line}` : ""}
-            </code>
-          )}
+          <SeverityBadge severity={item.severity} />
+          <span className="uncertainty__kind">{humanize(item.kind)}</span>
+          {item.file && <Location file={item.file} line={item.line} />}
           <span>{item.detail}</span>
         </li>
       ))}
