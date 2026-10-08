@@ -3,15 +3,18 @@
 //! Schema changes only through numbered migrations in `migrations/`; the applied count is kept in
 //! `PRAGMA user_version`. A database created by a newer Ripplepath is refused rather than guessed at.
 
+mod evidence;
 mod graph;
 
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
+pub use evidence::{HistoryEntry, StoredCoverage, StoredResult};
 pub use graph::{GraphDelta, IndexedFile, IndexedGraph};
 
-const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_index.sql")];
+const MIGRATIONS: &[&str] =
+    &[include_str!("migrations/0001_index.sql"), include_str!("migrations/0002_test_evidence.sql")];
 
 /// Number of migrations this build knows; exposed so `ripplepath --version`-style output and
 /// reports can say which schema they wrote.
@@ -51,10 +54,11 @@ impl Store {
     }
 
     fn init(mut conn: Connection) -> Result<Self, StorageError> {
-        // WAL lets the server read while an index run writes; foreign keys are unused on purpose
-        // (rows are replaced wholesale per index run), so there is nothing to enforce.
+        // WAL lets the server read while an index run writes. Foreign keys only link evidence rows
+        // to their run/report, so deleting a run removes its results.
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
         let current: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if current > SCHEMA_VERSION {
             return Err(StorageError::TooNew { found: current, supported: SCHEMA_VERSION });
