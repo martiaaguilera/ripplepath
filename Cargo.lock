@@ -2007,6 +2007,7 @@ dependencies = [
  "http-body-util",
  "ripplepath-core",
  "ripplepath-engine",
+ "ripplepath-git",
  "serde",
  "serde_json",
  "tempfile",
