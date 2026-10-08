@@ -5,7 +5,7 @@ Status markers: **[implemented]**, **[partial]**, **[planned]**. Only implemente
 ## 1. Inputs
 - A Git repository (read through the object database; the working tree is not traversed in revision mode).
 - `base` and `head` revisions (any revspec gix can resolve: branch, tag, SHA, `HEAD~1`).
-- Optional `ripplepath.yml` [planned].
+- Optional `ripplepath.yml`, read from the **base** revision [implemented] (§10, ADR 0005).
 - Optional evidence files: JaCoCo XML, LCOV, JUnit XML [implemented; see docs/TEST_INTELLIGENCE.md].
 
 ## 2. Symbols [implemented for Java]
@@ -112,5 +112,40 @@ version ⇒ byte-identical JSON. `analysis.json` carries `schema_version`.
   revision. `analyze --db` with a warm cache produces byte-identical output to a cold run.
 
 ## 9. Planned sections
-Architecture rules and delta, risk model v1, GitHub Action, replay evaluation.
-Each will be specified here as it is implemented.
+GitHub Action, replay evaluation. Each will be specified here as it is implemented.
+
+## 10. Configuration [implemented]
+`ripplepath.yml` at the repository root; full schema in docs/ARCHITECTURE_RULES.md. Strict parsing
+(unknown keys are errors), bounded input (64 KiB, 64 layers, 256 rules, 1 024 patterns).
+- Read from the base revision's tree through object access and applied to both graphs; head's file
+  is validated and reported (`config.head_change`), never applied (ADR 0005).
+- Invalid base file: defaults are used, errors reported, gate `config_invalid` fails.
+- `tests.mode` sets the selection mode unless `--mode` is given.
+- Report section `config`: source (`DEFAULTS` | `BASE_REVISION` | `INVALID_USING_DEFAULTS`), revision,
+  blob, head change, errors of each side, critical/generated patterns, mode, policy lists.
+
+## 11. Architecture rules and delta [implemented]
+Layers by path glob (first match wins); every edge kind except `CONTAINS` and `TESTS` is a
+dependency (`IMPORTS` included); `deny`/`allow` rules; violations keyed by (from, to, kind) and
+classified `NEW` / `PRE_EXISTING` / `REMOVED` after mapping signature changes and probable moves;
+layer cycles by Tarjan SCC; layer direction reversals; module coupling deltas. Report section
+`architecture`. Details: docs/ARCHITECTURE_RULES.md.
+
+## 12. Owners [implemented]
+CODEOWNERS from head (`.github/`, root, `docs/`, first found), GitHub semantics, last match wins.
+Report section `owners`: owners of changed files and of files of impacted symbols. Metadata, not
+authorization.
+
+## 13. Public API surface and risk model v1 [implemented]
+Report section `api_surface` (removed, signature changed, narrowed, added) and `risk`
+(`model_version` 1, 14 signals, integer points, bands). **The risk score is not a probability.**
+Details: docs/RISK_MODEL.md, ADR 0006.
+
+## 14. Merge policy [implemented]
+Report section `policy`: per gate `level` (`OFF` | `WARN` | `FAIL`) from the base configuration and
+`status` (`PASS` | `WARN` | `FAIL` | `OFF` | `NOT_EVALUATED`); result `FAIL` if any gate fails, else
+`WARN` if any warns, else `PASS`. A failing gate whose findings all rest on inferred edges warns
+instead. The risk score is never a gate. CLI exit codes: 0 success, 1 error, 2 policy `FAIL` with
+`analyze --fail-on-policy`.
+
+The report additions in §10–§14 are additive fields; `schema_version` stays 1.

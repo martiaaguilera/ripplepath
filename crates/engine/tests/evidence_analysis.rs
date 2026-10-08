@@ -99,7 +99,7 @@ fn ingest_everything(s: &Setup, name: &str) {
 fn analyze_with(s: &Setup, mode: SelectionMode) -> AnalysisReport {
     let mut options = AnalyzeOptions::new(&s.repo, "main~1", "main");
     options.db = Some(s.db.clone());
-    options.mode = mode;
+    options.mode = Some(mode);
     analyze(&options).unwrap()
 }
 

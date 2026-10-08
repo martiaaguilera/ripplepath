@@ -1,0 +1,26 @@
+# Ripplepath configuration for the java-banking fixture. Read from the BASE revision of a change.
+version: 1
+architecture:
+  layers:
+    - name: api
+      match: ["src/main/java/com/acme/bank/api/**"]
+    - name: application
+      match: ["src/main/java/com/acme/bank/application/**"]
+    - name: domain
+      match: ["src/main/java/com/acme/bank/domain/**"]
+    - name: persistence
+      match: ["src/main/java/com/acme/bank/persistence/**"]
+  rules:
+    - from: domain
+      deny: [api, application, persistence]
+    - from: persistence
+      deny: [api]
+    - from: application
+      deny: [api]
+  cycles: warn
+critical:
+  - "src/main/java/com/acme/bank/domain/**"
+  - "src/main/resources/db/migration/**"
+policy:
+  fail_on: [new_architecture_violation, new_cycle, parse_failure_in_changed_file]
+  warn_on: [breaking_api_change, removed_test_on_critical_path, config_changed]

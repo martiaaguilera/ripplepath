@@ -4,8 +4,11 @@
 use std::fmt::Write;
 
 use ripplepath_core::SymbolId;
+use ripplepath_engine::architecture::{ArchitectureReport, DeltaStatus, Violation};
+use ripplepath_engine::policy::GateStatus;
 use ripplepath_engine::{
-    AnalysisReport, ChangeKind, CoverageStatus, Reliability, SelectionDecision, Severity, TestReason,
+    AnalysisReport, ArchitectureCheck, ChangeKind, ConfigChange, ConfigSource, CoverageStatus, Reliability,
+    SelectionDecision, Severity, TestReason,
 };
 use ripplepath_graph::Hop;
 
@@ -190,7 +193,183 @@ fn render_raw(report: &AnalysisReport) -> String {
         let _ = writeln!(out, "  {severity} {location}{}", item.detail);
     }
     more(&mut out, report.uncertainty.len());
+
+    render_governance(&mut out, report);
     out
+}
+
+fn render_governance(out: &mut String, report: &AnalysisReport) {
+    let risk = &report.risk;
+    section(
+        out,
+        &format!(
+            "Risk {}/100 ({}), model v{}",
+            risk.score,
+            format!("{:?}", risk.level).to_uppercase(),
+            risk.model_version
+        ),
+    );
+    let _ = writeln!(out, "  {}", risk.interpretation);
+    for signal in risk.signals.iter().filter(|s| s.points > 0) {
+        let _ = writeln!(
+            out,
+            "  +{:<3} {:?}: value {} -> {} unit(s) x {} (cap {})",
+            signal.points, signal.id, signal.value, signal.units, signal.weight, signal.cap
+        );
+        for item in signal.evidence.iter().take(3) {
+            let _ = writeln!(out, "         {item}");
+        }
+        if signal.evidence.len() > 3 || signal.evidence_truncated > 0 {
+            let _ = writeln!(
+                out,
+                "         ... {} more",
+                signal.evidence.len() - 3.min(signal.evidence.len()) + signal.evidence_truncated
+            );
+        }
+    }
+    let skipped: Vec<String> = risk.signals.iter().filter(|s| !s.evaluated).map(|s| format!("{:?}", s.id)).collect();
+    if !skipped.is_empty() {
+        let _ = writeln!(out, "  not evaluated (missing input, scored 0): {}", skipped.join(", "));
+    }
+
+    let api = &report.api_surface;
+    if !api.changes.is_empty() {
+        section(out, &format!("Public API: {} breaking, {} added", api.breaking, api.added));
+        for change in api.changes.iter().filter(|c| c.kind.is_breaking()).take(LIST_LIMIT) {
+            let _ = writeln!(out, "  {:?} {}  ({}:{})", change.kind, display(&change.id), change.file, change.line);
+        }
+    }
+
+    render_architecture(out, &report.architecture);
+
+    let owners = &report.owners;
+    match &owners.source {
+        None => section(out, "Owners: no CODEOWNERS file in head"),
+        Some(source) => {
+            let changed = if owners.changed_in_head { " (edited by this change)" } else { "" };
+            section(out, &format!("Owners (from {source}{changed}; review routing, not authorization)"));
+            for owner in owners.owners.iter().take(LIST_LIMIT) {
+                let _ = writeln!(
+                    out,
+                    "  {}  changed {} file(s), impacted {} file(s)",
+                    owner.owner, owner.changed_files, owner.impacted_files
+                );
+            }
+            if owners.unowned_changed_files > 0 {
+                let _ = writeln!(out, "  {} changed file(s) have no owner", owners.unowned_changed_files);
+            }
+        }
+    }
+    for error in owners.errors.iter().take(5) {
+        let _ = writeln!(out, "  CODEOWNERS line {}: {}", error.line, error.message);
+    }
+
+    let config = &report.config;
+    let source = match config.source {
+        ConfigSource::Defaults => "built-in defaults (no ripplepath.yml in base)".to_owned(),
+        ConfigSource::BaseRevision => format!("{} from base {}", config.path, config.revision),
+        ConfigSource::InvalidUsingDefaults => format!("defaults: {} in base is INVALID", config.path),
+    };
+    let policy = &report.policy;
+    section(out, &format!("Policy: {}  (config: {source})", format!("{:?}", policy.result).to_uppercase()));
+    if config.head_change != ConfigChange::Unchanged && config.head_change != ConfigChange::Absent {
+        let _ = writeln!(out, "  note: head {:?} {}; it applies only after merge", config.head_change, config.path);
+    }
+    for error in config.errors.iter().chain(&config.head_errors) {
+        let _ = writeln!(out, "  config error: {error}");
+    }
+    for gate in &policy.gates {
+        let status = match gate.status {
+            GateStatus::Pass => "pass",
+            GateStatus::Warn => "WARN",
+            GateStatus::Fail => "FAIL",
+            GateStatus::Off => "off ",
+            GateStatus::NotEvaluated => "n/a ",
+        };
+        let _ = writeln!(out, "  {status} {}: {}", gate.gate.name(), gate.detail);
+        if matches!(gate.status, GateStatus::Warn | GateStatus::Fail) {
+            for item in gate.evidence.iter().take(3) {
+                let _ = writeln!(out, "       {item}");
+            }
+        }
+    }
+    let _ = writeln!(out, "  {}", policy.note);
+}
+
+/// `with_status` is false for single-revision checks, where every finding is simply present.
+fn violation_line(out: &mut String, v: &Violation, with_status: bool) {
+    let status = if with_status { format!("{:?} ", v.status) } else { String::new() };
+    let _ = writeln!(
+        out,
+        "  {status}{} -> {}: {}  {} -{:?}-> {}  ({}:{}, {:?})",
+        v.from_layer,
+        v.to_layer,
+        v.description,
+        display(&v.edge.from),
+        v.edge.kind,
+        display(&v.edge.to),
+        v.edge.file,
+        v.edge.line,
+        v.edge.evidence
+    );
+}
+
+fn render_architecture(out: &mut String, arch: &ArchitectureReport) {
+    if !arch.configured {
+        section(out, "Architecture: no layers configured (see docs/ARCHITECTURE_RULES.md)");
+    } else {
+        let s = &arch.summary;
+        section(
+            out,
+            &format!(
+                "Architecture: {} new, {} pre-existing, {} removed violation(s); {} new, {} pre-existing cycle(s)",
+                s.new_violations, s.pre_existing_violations, s.removed_violations, s.new_cycles, s.pre_existing_cycles
+            ),
+        );
+        let shown = arch.violations.iter().filter(|v| v.status != DeltaStatus::PreExisting);
+        for v in shown.take(LIST_LIMIT) {
+            violation_line(out, v, true);
+        }
+        for cycle in arch.cycles.iter().filter(|c| c.status != DeltaStatus::PreExisting) {
+            let _ = writeln!(out, "  {:?} cycle: {}", cycle.status, cycle.layers.join(" <-> "));
+        }
+        for dep in arch.layer_dependencies.iter().filter(|d| d.direction_reversed) {
+            let _ = writeln!(out, "  direction reversed: {} now depends on {}", dep.from, dep.to);
+        }
+    }
+    if !arch.module_coupling.is_empty() {
+        let _ = writeln!(out, "  module coupling changed for {} pair(s):", arch.module_coupling.len());
+        for pair in arch.module_coupling.iter().take(5) {
+            let _ =
+                writeln!(out, "    {} -> {}: {} -> {} edge(s)", pair.from, pair.to, pair.base_edges, pair.head_edges);
+        }
+    }
+}
+
+pub fn render_architecture_check(check: &ArchitectureCheck) -> String {
+    let mut out = String::new();
+    let rev = check.revision.commit.as_deref().unwrap_or(&check.revision.tree);
+    let _ = writeln!(out, "Ripplepath architecture check of {} ({})", check.revision.spec, &rev[..rev.len().min(10)]);
+    if !check.config_found {
+        let _ = writeln!(out, "  no ripplepath.yml in this revision; nothing to check");
+        return neutralize_terminal_controls(&out);
+    }
+    for (layer, symbols) in &check.layers {
+        let _ = writeln!(out, "  layer {layer}: {symbols} symbol(s)");
+    }
+    for rule in &check.rules {
+        let _ = writeln!(out, "  rule {}: {}", rule.index + 1, rule.description);
+    }
+    section(&mut out, &format!("{} violation(s)", check.violations.len()));
+    for v in check.violations.iter().take(LIST_LIMIT) {
+        violation_line(&mut out, v, false);
+    }
+    more(&mut out, check.violations.len());
+    section(&mut out, &format!("{} layer cycle(s)", check.cycles.len()));
+    for cycle in &check.cycles {
+        let _ = writeln!(out, "  {}", cycle.layers.join(" <-> "));
+    }
+    neutralize_terminal_controls(&out)
 }
 
 fn severity(severity: Severity) -> &'static str {
