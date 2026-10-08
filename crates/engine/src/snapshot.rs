@@ -193,6 +193,31 @@ pub(crate) fn language_of(path: &str) -> Option<Language> {
     }
 }
 
+/// Source code in a language Ripplepath does not analyse. A change to it can break code and tests
+/// through edges the graph does not have, so it is uncertainty that widens the test selection, not
+/// a footnote like a changed README.
+pub(crate) fn unanalysed_source_language(path: &str) -> Option<&'static str> {
+    let ext = path.rsplit_once('.').map(|(_, ext)| ext)?;
+    Some(match ext {
+        "kt" | "kts" => "Kotlin",
+        "scala" | "sc" => "Scala",
+        "groovy" | "gvy" => "Groovy",
+        "vue" | "svelte" | "astro" => "a web component format",
+        "py" => "Python",
+        "go" => "Go",
+        "rs" => "Rust",
+        "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" => "C/C++",
+        "cs" | "fs" => ".NET",
+        "rb" => "Ruby",
+        "php" => "PHP",
+        "swift" => "Swift",
+        "dart" => "Dart",
+        "ex" | "exs" => "Elixir",
+        "clj" | "cljs" => "Clojure",
+        _ => return None,
+    })
+}
+
 /// Dependencies checked into the tree and minified bundles are not the repository's own code;
 /// indexing them would multiply analysis time and drown real dependents. Reported, not hidden.
 fn exclusion(path: &str) -> Option<&'static str> {

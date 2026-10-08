@@ -342,11 +342,11 @@ fn fallback_reasons(
             UncertaintyKind::UnsupportedLanguage => "UNSUPPORTED_FILE_CHANGED",
             _ => continue,
         };
-        let severity = if code == "UNSUPPORTED_FILE_CHANGED" { Severity::Low } else { item.severity };
-        if severity == Severity::Low {
+        // Low-severity items (a changed README, image or unknown text file) never widen.
+        if item.severity == Severity::Low {
             continue;
         }
-        add(severity, code, item.detail.clone());
+        add(item.severity, code, item.detail.clone());
     }
     let changed_code: Vec<&ChangedSymbol> = changed
         .iter()
@@ -564,14 +564,29 @@ fn collect_uncertainty(
                     None,
                     format!("{side} revision is not valid UTF-8 text"),
                 )),
-                IndexStatus::NotSource if side == "head" || change.head_path().is_none() => items.push(item(
-                    Severity::Low,
-                    UncertaintyKind::UnsupportedLanguage,
-                    Some(&file.path),
-                    None,
-                    None,
-                    "changed file is not in a supported language; its effects are not traced".to_owned(),
-                )),
+                IndexStatus::NotSource if side == "head" || change.head_path().is_none() => {
+                    items.push(match crate::snapshot::unanalysed_source_language(&file.path) {
+                        Some(language) => item(
+                            Severity::Medium,
+                            UncertaintyKind::UnsupportedLanguage,
+                            Some(&file.path),
+                            None,
+                            None,
+                            format!(
+                                "changed source code in {language}, which is not analysed; code and tests that \
+                                 depend on it are unknown"
+                            ),
+                        ),
+                        None => item(
+                            Severity::Low,
+                            UncertaintyKind::UnsupportedLanguage,
+                            Some(&file.path),
+                            None,
+                            None,
+                            "changed file is not in a supported language; its effects are not traced".to_owned(),
+                        ),
+                    });
+                }
                 IndexStatus::Excluded { reason } => items.push(item(
                     Severity::Low,
                     UncertaintyKind::ExcludedFile,
