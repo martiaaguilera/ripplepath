@@ -137,13 +137,20 @@ export function ImpactGraph({ graph, highlight, selection, groupByModule, onSele
       graph.edges.map((edge) => {
         const onPath = edge.edges.some((e) => highlight.edges.has(edgeKey(e)));
         const first = edge.edges[0];
+        // Relation labels only where the eye is: on the highlighted path, the selected edge and
+        // aggregates. Labelling every edge piled words on each crossing; line styles carry the
+        // evidence class everywhere and the Edges tab lists every relation as text.
         const label =
-          edge.edges.length > 1 ? `${edge.edges.length} edges` : first ? first.kind.toLowerCase() : "";
+          edge.edges.length > 1
+            ? `${edge.edges.length} edges`
+            : first && (onPath || selectedEdge === edge.id)
+              ? first.kind.toLowerCase()
+              : undefined;
         return {
           id: edge.id,
           source: edge.from,
           target: edge.to,
-          label,
+          ...(label === undefined ? {} : { label }),
           className: edgeClass(edge, onPath, hasHighlight && !onPath, selectedEdge === edge.id),
           markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
           data: { edge },

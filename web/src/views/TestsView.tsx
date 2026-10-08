@@ -38,7 +38,7 @@ export function TestsView({ report, url, navigate }: Props) {
   const selection = report.test_selection;
   const tests = orderedTests(report);
   const selected = tests.find((t) => t.id === url.test) ?? tests[0] ?? null;
-  const rows = useWindowedRows(tests.length, ROW_HEIGHT);
+  const { setContainer, ...rows } = useWindowedRows(tests.length, ROW_HEIGHT);
   const fullSuite = selection.decision === "FULL_SUITE";
   const evidence = report.evidence;
   const onSymbol = (id: string) => {
@@ -121,7 +121,7 @@ export function TestsView({ report, url, navigate }: Props) {
             <Empty>No test has a dependency path or measured coverage reaching this change.</Empty>
           ) : (
             <div
-              ref={rows.setContainer}
+              ref={setContainer}
               className={`table-wrap ${rows.windowed ? "table-wrap--windowed" : ""}`}
               {...(rows.windowed ? { tabIndex: 0, "aria-label": "Ranked tests, scrollable" } : {})}
             >

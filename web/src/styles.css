@@ -10,6 +10,7 @@
   --text-muted: #5b6573;
   --accent: #2563eb;
   --accent-soft: #e6eefe;
+  --on-accent: #ffffff;
   --changed: #b45309;
   --changed-soft: #fdf1e2;
   --added: #15803d;
@@ -42,6 +43,7 @@
     --text-muted: #9aa4b2;
     --accent: #6c9bff;
     --accent-soft: #1b2a47;
+    --on-accent: #0f1216;
     --changed: #f59e0b;
     --changed-soft: #3a2a12;
     --added: #4ade80;
@@ -202,7 +204,7 @@ input {
   border: 1px solid var(--accent);
   border-radius: var(--radius);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 600;
   cursor: pointer;
 }
@@ -901,7 +903,7 @@ small,
   padding: 6px 10px;
   border-radius: var(--radius);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .skip-link:focus {

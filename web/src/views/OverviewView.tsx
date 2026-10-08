@@ -59,11 +59,14 @@ export function OverviewView({ report, url, navigate }: Props) {
     [report, maxDepth, edgeKinds, evidence, query, hideIsolated],
   );
   const display = useMemo(() => displayGraph(view, collapse, expanded), [view, collapse, expanded]);
+  // Keyed on primitives, not on `selection`: that object is rebuilt every render.
+  const selectedSymbol = edgeSelection ? null : url.sel;
   const highlight = useMemo(() => {
-    if (!selection) return EMPTY_HIGHLIGHT;
-    if (selection.type === "node") return highlightFor(report, selection.id);
-    return { nodes: new Set([selection.edge.from, selection.edge.to]), edges: new Set([edgeKey(selection.edge)]) };
-  }, [report, selection]);
+    if (edgeSelection) {
+      return { nodes: new Set([edgeSelection.from, edgeSelection.to]), edges: new Set([edgeKey(edgeSelection)]) };
+    }
+    return selectedSymbol ? highlightFor(report, selectedSymbol) : EMPTY_HIGHLIGHT;
+  }, [report, edgeSelection, selectedSymbol]);
 
   const selectSymbol = (id: string) => {
     setEdgeSelection(null);
@@ -77,8 +80,8 @@ export function OverviewView({ report, url, navigate }: Props) {
     setEdgeSelection(null);
     navigate({ sel: next?.id ?? null }, { replace: true });
   };
-  const openFile = (path: string) => {
-    navigate({ view: "diff", file: path });
+  const openFile = (path: string, line: number | null = null) => {
+    navigate({ view: "diff", file: path, line });
   };
   const expandModule = (module: string) => {
     setExpanded((current) => new Set(current).add(module));

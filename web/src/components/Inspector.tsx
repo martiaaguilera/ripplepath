@@ -11,7 +11,7 @@ interface Props {
   report: AnalysisReport;
   selection: Selection;
   onSelectSymbol: (id: string) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, line: number | null) => void;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -43,8 +43,12 @@ export function Inspector({ report, selection, onSelectSymbol, onOpenFile }: Pro
     );
   }
 
+  const index = indexReport(report);
+  const changedPaths = index.filePaths;
+
   if (selection.type === "edge") {
     const { edge } = selection;
+    const fromDeleted = index.changed.get(edge.from)?.change === "DELETED";
     return (
       <aside className="inspector" aria-label="Inspector">
         <h2 className="panel-title">Edge</h2>
@@ -62,9 +66,21 @@ export function Inspector({ report, selection, onSelectSymbol, onOpenFile }: Pro
             <EvidenceBadge evidence={edge.evidence} />
           </Field>
           <Field label="Source">
-            <button type="button" className="link loc" onClick={() => onOpenFile(edge.file)}>
-              {edge.file}:{edge.line}
-            </button>
+            {changedPaths.has(edge.file) ? (
+              <button
+                type="button"
+                className="link loc"
+                title="Open the diff"
+                onClick={() => {
+                  // Diff anchors are head line numbers; a base-side edge's line would mislead.
+                  onOpenFile(edge.file, fromDeleted ? null : edge.line);
+                }}
+              >
+                {edge.file}:{edge.line}
+              </button>
+            ) : (
+              <Location file={edge.file} line={edge.line} />
+            )}
           </Field>
           <Field label="Rule">
             <code>{edge.rule}</code>
@@ -83,7 +99,6 @@ export function Inspector({ report, selection, onSelectSymbol, onOpenFile }: Pro
   }
 
   const id = selection.id;
-  const index = indexReport(report);
   const node = index.nodes.get(id);
   const changed = index.changed.get(id);
   const impacted = index.impacted.get(id);
@@ -97,6 +112,8 @@ export function Inspector({ report, selection, onSelectSymbol, onOpenFile }: Pro
   const owners = file ? report.owners.files.find((f) => f.path === file) : undefined;
   const signals = signalsNaming(report, [id, file ?? ""]);
   const coverage = changed?.coverage ?? impacted?.coverage ?? null;
+  // Diff anchors are head line numbers: deleted symbols and base-graph dependents have none.
+  const headSide = changed?.change !== "DELETED" && impacted?.graph !== "base";
 
   return (
     <aside className="inspector" aria-label="Inspector">
@@ -134,9 +151,20 @@ export function Inspector({ report, selection, onSelectSymbol, onOpenFile }: Pro
         )}
         {file && (
           <Field label="Source">
-            <button type="button" className="link loc" onClick={() => onOpenFile(file)} title="Open the diff">
-              {file}:{line}
-            </button>
+            {changedPaths.has(file) ? (
+              <button
+                type="button"
+                className="link loc"
+                title="Open the diff"
+                onClick={() => {
+                  onOpenFile(file, headSide ? (line ?? null) : null);
+                }}
+              >
+                {file}:{line}
+              </button>
+            ) : (
+              <Location file={file} line={line ?? null} />
+            )}
           </Field>
         )}
         <Field label="Dependents shown">{dependents.length}</Field>
