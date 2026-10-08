@@ -9,7 +9,7 @@ pub use resolve::resolve;
 
 /// Bumped whenever extraction output for the same input can change. Part of the fact-cache key, so
 /// a new extractor never reuses facts produced by an old one.
-pub const EXTRACTOR_VERSION: u32 = 2;
+pub const EXTRACTOR_VERSION: u32 = 3;
 
 /// Annotations that mark a JUnit 4/5 or TestNG test method. Matched on simple name, so
 /// `@org.junit.Test` and `@Test` are equivalent.

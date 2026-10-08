@@ -181,14 +181,17 @@ fn extract_type(node: Node<'_>, source: &str, cx: &TypeContext<'_>, out: &mut Ve
     if kind == SymbolKind::Record
         && let Some(params) = node.child_by_field_name("parameters")
     {
-        for param in parameters(params, source).0 {
+        // Each component is fingerprinted on its own declaration. Using the whole record's
+        // fingerprint marked every component modified (and every accessor caller impacted) when
+        // an unrelated method was added to the record.
+        for (param, component) in parameter_nodes(params, source).0 {
             decl.fields.push(FieldDecl {
                 name: param.name,
                 ty: param.ty,
                 visibility: Visibility::Private,
                 is_static: false,
-                span: decl.span,
-                fingerprint: decl.fingerprint,
+                span: span(component),
+                fingerprint: syntax::fingerprint(component, source, &[], is_comment),
                 refs: Vec::new(),
             });
         }
@@ -366,6 +369,12 @@ fn method(node: Node<'_>, is_constructor: bool, cx: &MemberContext<'_>) -> Metho
 }
 
 fn parameters(node: Node<'_>, source: &str) -> (Vec<Param>, bool) {
+    let (params, varargs) = parameter_nodes(node, source);
+    (params.into_iter().map(|(param, _)| param).collect(), varargs)
+}
+
+/// Parameters with the syntax node each came from.
+fn parameter_nodes<'t>(node: Node<'t>, source: &str) -> (Vec<(Param, Node<'t>)>, bool) {
     let mut params = Vec::new();
     let mut varargs = false;
     for child in named_children(node) {
@@ -377,15 +386,18 @@ fn parameters(node: Node<'_>, source: &str) -> (Vec<Param>, bool) {
                     continue;
                 };
                 let dims = child.child_by_field_name("dimensions").map_or(0, |d| text(d, source).matches('[').count());
-                params.push(Param {
-                    name: text(name_node, source).to_owned(),
-                    ty: type_use(ty_node, source).unwrap_or(TypeUse {
-                        name: text(ty_node, source).to_owned(),
-                        line: line(ty_node),
-                        args: Vec::new(),
-                    }),
-                    signature_text: format!("{}{}", signature_text(ty_node, source), "[]".repeat(dims)),
-                });
+                params.push((
+                    Param {
+                        name: text(name_node, source).to_owned(),
+                        ty: type_use(ty_node, source).unwrap_or(TypeUse {
+                            name: text(ty_node, source).to_owned(),
+                            line: line(ty_node),
+                            args: Vec::new(),
+                        }),
+                        signature_text: format!("{}{}", signature_text(ty_node, source), "[]".repeat(dims)),
+                    },
+                    child,
+                ));
             }
             "spread_parameter" => {
                 varargs = true;
@@ -399,15 +411,18 @@ fn parameters(node: Node<'_>, source: &str) -> (Vec<Param>, bool) {
                     .and_then(|d| d.child_by_field_name("name"))
                     .map(|n| text(n, source).to_owned())
                     .unwrap_or_default();
-                params.push(Param {
-                    name,
-                    ty: type_use(*ty_node, source).unwrap_or(TypeUse {
-                        name: text(*ty_node, source).to_owned(),
-                        line: line(*ty_node),
-                        args: Vec::new(),
-                    }),
-                    signature_text: format!("{}...", signature_text(*ty_node, source)),
-                });
+                params.push((
+                    Param {
+                        name,
+                        ty: type_use(*ty_node, source).unwrap_or(TypeUse {
+                            name: text(*ty_node, source).to_owned(),
+                            line: line(*ty_node),
+                            args: Vec::new(),
+                        }),
+                        signature_text: format!("{}...", signature_text(*ty_node, source)),
+                    },
+                    child,
+                ));
             }
             _ => {}
         }

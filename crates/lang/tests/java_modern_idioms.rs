@@ -155,3 +155,19 @@ fn many_same_named_locals_cannot_make_receiver_typing_exponential() {
     // Short chains resolve; the budget only cuts off the deep end.
     assert!(edge(&g, "java:p.User#run(Node)", "java:p.Node#next()", EdgeKind::Calls).is_some());
 }
+
+#[test]
+fn adding_a_method_to_a_record_does_not_modify_its_components() {
+    let before = "package p;\npublic record Settings(int retries, String name) {\n}\n";
+    let after = "package p;\npublic record Settings(int retries, String name) {\n  public int twice() { return retries * 2; }\n}\n";
+    let renamed = "package p;\npublic record Settings(int retries, String label) {\n}\n";
+    let fingerprints = |src: &str| {
+        let file = java::extract("p/Settings.java", src, BUDGET).unwrap();
+        let g = java::resolve(&[&file]);
+        let fp = |id: &str| g.symbols.iter().find(|s| s.id == SymbolId::new(id)).map(|s| s.fingerprint);
+        (fp("java:p.Settings#retries"), fp("java:p.Settings#name"))
+    };
+    assert_eq!(fingerprints(before), fingerprints(after));
+    // Renaming one component leaves the other untouched.
+    assert_eq!(fingerprints(before).0, fingerprints(renamed).0);
+}
