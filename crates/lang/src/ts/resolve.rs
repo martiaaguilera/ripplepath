@@ -405,6 +405,9 @@ impl<'a> Index<'a> {
                 let decl = &f.decls[i];
                 match decl.kind {
                     SymbolKind::Class | SymbolKind::Enum => (val, exact),
+                    // Initialised with an object literal: its properties are the members, whatever
+                    // the annotation says (the literal is the implementation that runs).
+                    SymbolKind::Variable if !decl.members.is_empty() => (val, exact),
                     SymbolKind::Variable => match decl.ty.as_ref().or(decl.inferred_ty.as_ref()) {
                         Some(ty) => self.instance_of(f, &[], ty),
                         None => (Val::Unknown, exact),

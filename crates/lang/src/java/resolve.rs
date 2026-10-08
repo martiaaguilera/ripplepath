@@ -7,12 +7,13 @@
 //! Anything outside that subset is classified as either *external* (a library type — no edge
 //! needed) or *unresolved* (surfaced as uncertainty), never guessed.
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use ripplepath_core::{EdgeKind, Evidence, Span, Symbol, SymbolId, SymbolKind, Visibility};
 
 use super::TEST_ANNOTATIONS;
-use super::facts::{BodyRef, FieldDecl, JavaFile, Local, MethodDecl, Receiver, TypeDecl, TypeUse};
+use super::facts::{BodyRef, FieldDecl, JavaFile, Local, LocalInit, MethodDecl, Receiver, TypeDecl, TypeUse};
 use crate::LanguageGraph;
 use crate::output::Output;
 
@@ -21,6 +22,10 @@ const OBJECT_METHODS: &[&str] =
     &["equals", "hashCode", "toString", "getClass", "notify", "notifyAll", "wait", "clone", "finalize"];
 
 const MAX_RECEIVER_DEPTH: usize = 64;
+/// Receiver-typing steps per reference; see `Scope::fuel`. Real code needs a handful per chain link.
+const RECEIVER_FUEL: u32 = 256;
+/// Declarations of one local name compared before giving up; see `local_recv`.
+const MAX_SAME_NAME_LOCALS: usize = 8;
 
 pub fn resolve(files: &[&JavaFile]) -> LanguageGraph {
     let index = Index::build(files);
@@ -49,6 +54,10 @@ struct Index<'a> {
     /// exists here is *unresolved* (likely a scoping case we do not model); one that does not exist
     /// here is *external* (a library type).
     simple_names: BTreeSet<&'a str>,
+    /// Names of every method and record component declared in the repository. A call whose name
+    /// is not here cannot bind to repository code whatever its receiver is, so an untyped receiver
+    /// is no evidence of a missing edge: such calls are external, not unresolved.
+    member_names: BTreeSet<&'a str>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,9 +69,172 @@ enum TypeRes {
 
 #[derive(Clone, Debug)]
 enum RecvType {
-    Internal { fqn: String, evidence: Evidence },
+    Internal {
+        fqn: String,
+        evidence: Evidence,
+    },
+    /// A `java.util` container whose element types are known from its type arguments. For every
+    /// other purpose it is an external type.
+    Container {
+        family: Family,
+        args: Vec<RecvType>,
+    },
     External,
     Unknown,
+}
+
+/// JDK container shapes whose element-returning methods are modelled by a fixed table (see
+/// `container_result`). The JDK's signatures are stable, but they are a table rather than code
+/// we read, so anything typed through them is `STATIC_INFERRED`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Family {
+    /// `Iterable<E>` and its subtypes: lists, sets, queues, deques.
+    Collection,
+    Optional,
+    Map,
+    /// `java.util.stream.Stream<E>`, reached through `stream()` on a collection.
+    Stream,
+}
+
+const JDK_CONTAINERS: &[(&str, &str, Family)] = &[
+    ("java.lang", "Iterable", Family::Collection),
+    ("java.util", "Collection", Family::Collection),
+    ("java.util", "SequencedCollection", Family::Collection),
+    ("java.util", "List", Family::Collection),
+    ("java.util", "ArrayList", Family::Collection),
+    ("java.util", "LinkedList", Family::Collection),
+    ("java.util", "Set", Family::Collection),
+    ("java.util", "SequencedSet", Family::Collection),
+    ("java.util", "HashSet", Family::Collection),
+    ("java.util", "LinkedHashSet", Family::Collection),
+    ("java.util", "SortedSet", Family::Collection),
+    ("java.util", "NavigableSet", Family::Collection),
+    ("java.util", "TreeSet", Family::Collection),
+    ("java.util", "Queue", Family::Collection),
+    ("java.util", "Deque", Family::Collection),
+    ("java.util", "ArrayDeque", Family::Collection),
+    ("java.util", "PriorityQueue", Family::Collection),
+    ("java.util.concurrent", "BlockingQueue", Family::Collection),
+    ("java.util.concurrent", "LinkedBlockingQueue", Family::Collection),
+    ("java.util.concurrent", "ArrayBlockingQueue", Family::Collection),
+    ("java.util.concurrent", "ConcurrentLinkedQueue", Family::Collection),
+    ("java.util.concurrent", "ConcurrentLinkedDeque", Family::Collection),
+    ("java.util.concurrent", "CopyOnWriteArrayList", Family::Collection),
+    ("java.util", "Optional", Family::Optional),
+    ("java.util.stream", "Stream", Family::Stream),
+    ("java.util", "Map", Family::Map),
+    ("java.util", "SequencedMap", Family::Map),
+    ("java.util", "HashMap", Family::Map),
+    ("java.util", "LinkedHashMap", Family::Map),
+    ("java.util", "SortedMap", Family::Map),
+    ("java.util", "NavigableMap", Family::Map),
+    ("java.util", "TreeMap", Family::Map),
+    ("java.util", "EnumMap", Family::Map),
+    ("java.util.concurrent", "ConcurrentMap", Family::Map),
+    ("java.util.concurrent", "ConcurrentHashMap", Family::Map),
+    ("java.util.concurrent", "ConcurrentSkipListMap", Family::Map),
+];
+
+/// What a call on a JDK container returns, for the methods whose result is an element (or a view
+/// of elements). `None` for anything else: such calls are external like any library call.
+fn container_result(family: Family, args: &[RecvType], name: &str, arity: u32) -> Option<RecvType> {
+    let arg = |i: usize| match args.get(i) {
+        Some(t) => inferred(t.clone()),
+        None if args.is_empty() => RecvType::External, // raw type: elements are Object
+        None => RecvType::Unknown,
+    };
+    match (family, name, arity) {
+        (
+            Family::Collection,
+            "getFirst" | "getLast" | "removeFirst" | "removeLast" | "peek" | "poll" | "element" | "pop" | "first"
+            | "last" | "peekFirst" | "peekLast" | "pollFirst" | "pollLast" | "take",
+            0,
+        )
+        | (Family::Collection, "get", 1)
+        | (Family::Optional, "get" | "orElseThrow", 0)
+        | (Family::Optional, "orElseThrow" | "orElse", 1) => Some(arg(0)),
+        (Family::Map, "get" | "remove", 1)
+        | (
+            Family::Map,
+            "getOrDefault" | "put" | "putIfAbsent" | "computeIfAbsent" | "computeIfPresent" | "compute" | "replace",
+            2,
+        )
+        | (Family::Map, "merge", 3) => Some(arg(1)),
+        (Family::Collection, "stream" | "parallelStream", 0) | (Family::Optional, "stream", 0) => {
+            Some(RecvType::Container { family: Family::Stream, args: args.to_vec() })
+        }
+        (Family::Optional, "filter", 1) => Some(RecvType::Container { family, args: args.to_vec() }),
+        (
+            Family::Stream,
+            "filter" | "sorted" | "peek" | "distinct" | "limit" | "skip" | "takeWhile" | "dropWhile" | "parallel"
+            | "sequential" | "unordered",
+            _,
+        ) => Some(RecvType::Container { family, args: args.to_vec() }),
+        (Family::Stream, "findFirst" | "findAny", 0) | (Family::Stream, "min" | "max", 1) => {
+            Some(RecvType::Container { family: Family::Optional, args: args.to_vec() })
+        }
+        (Family::Stream, "toList", 0) => Some(RecvType::Container { family: Family::Collection, args: args.to_vec() }),
+        (Family::Map, "values", 0) => Some(RecvType::Container { family: Family::Collection, args: vec![arg(1)] }),
+        (Family::Map, "keySet" | "sequencedKeySet" | "navigableKeySet", 0) => {
+            Some(RecvType::Container { family: Family::Collection, args: vec![arg(0)] })
+        }
+        _ => None,
+    }
+}
+
+/// Type of parameter `index` of a lambda passed to `method` on a container: the element for
+/// element-consuming methods (`forEach`, `filter`, `map`, comparators...), key or value for maps.
+fn lambda_param(container: RecvType, method: &str, index: u32) -> RecvType {
+    let RecvType::Container { family, args } = container else {
+        return RecvType::Unknown;
+    };
+    let arg = |i: usize| match args.get(i) {
+        Some(t) => inferred(t.clone()),
+        None if args.is_empty() => RecvType::External,
+        None => RecvType::Unknown,
+    };
+    match (family, method, index) {
+        (Family::Collection, "forEach" | "removeIf", 0)
+        | (
+            Family::Stream,
+            "filter" | "map" | "forEach" | "forEachOrdered" | "anyMatch" | "allMatch" | "noneMatch" | "peek"
+            | "mapToInt" | "mapToLong" | "mapToDouble" | "mapToObj" | "flatMap" | "mapMulti" | "takeWhile"
+            | "dropWhile",
+            0,
+        )
+        | (Family::Stream, "sorted" | "min" | "max", 0 | 1)
+        | (Family::Optional, "map" | "flatMap" | "filter" | "ifPresent" | "ifPresentOrElse", 0) => arg(0),
+        (Family::Map, "forEach" | "compute" | "computeIfPresent" | "replaceAll", 0)
+        | (Family::Map, "computeIfAbsent", 0) => arg(0),
+        (Family::Map, "forEach" | "compute" | "computeIfPresent" | "replaceAll", 1) | (Family::Map, "merge", 0 | 1) => {
+            arg(1)
+        }
+        _ => RecvType::Unknown,
+    }
+}
+
+/// Element of an iterable container (`for (var x : xs)`).
+fn iteration_element(container: RecvType) -> RecvType {
+    match container {
+        RecvType::Container { family: Family::Collection, args } => match args.into_iter().next() {
+            Some(t) => inferred(t),
+            None => RecvType::External,
+        },
+        // Arrays erase to their element type in `TypeUse`, so an iterated array of an in-repo
+        // type is indistinguishable from a non-iterable value of that type. Do not guess.
+        _ => RecvType::Unknown,
+    }
+}
+
+fn inferred(t: RecvType) -> RecvType {
+    weaken(t, Evidence::StaticInferred)
+}
+
+fn weaken(t: RecvType, by: Evidence) -> RecvType {
+    match t {
+        RecvType::Internal { fqn, evidence } => RecvType::Internal { fqn, evidence: weaker(evidence, by) },
+        other => other,
+    }
 }
 
 enum Lookup<T> {
@@ -76,6 +248,10 @@ struct Scope<'a> {
     type_fqn: &'a str,
     type_params: Vec<&'a str>,
     locals: &'a [Local],
+    /// Receiver-typing steps left for the reference being resolved. Typing a local whose name is
+    /// declared several times resolves every declaration, which branches; the depth bound alone
+    /// would allow exponential work on crafted input.
+    fuel: Cell<u32>,
 }
 
 fn fqn_of(file: &JavaFile, relative: &str) -> String {
@@ -113,8 +289,13 @@ impl<'a> Index<'a> {
     fn build(files: &[&'a JavaFile]) -> Self {
         let mut declared: BTreeMap<String, Vec<(&'a JavaFile, &'a TypeDecl)>> = BTreeMap::new();
         let mut simple_names = BTreeSet::new();
+        let mut member_names = BTreeSet::new();
         for &file in files {
             for decl in &file.types {
+                member_names.extend(decl.methods.iter().map(|m| m.name.as_str()));
+                if decl.kind == SymbolKind::Record {
+                    member_names.extend(decl.fields.iter().filter(|f| !f.is_static).map(|f| f.name.as_str()));
+                }
                 declared.entry(fqn_of(file, &decl.name)).or_default().push((file, decl));
                 simple_names.insert(last_segment(&decl.name));
             }
@@ -150,7 +331,7 @@ impl<'a> Index<'a> {
             }
             types.insert(fqn, TypeEntry { id, file, decl, outer, methods, constructors, fields });
         }
-        Self { types, simple_names }
+        Self { types, simple_names, member_names }
     }
 
     fn is_canonical(&self, file: &JavaFile, decl: &TypeDecl) -> bool {
@@ -244,15 +425,41 @@ impl<'a> Index<'a> {
         self.resolve_type(scope.file, Some(scope.type_fqn), &scope.type_params, name)
     }
 
-    /// Resolves a type mentioned in a member declared on `owner_fqn` (e.g. a field's declared type),
-    /// using the declaring file's imports rather than the caller's.
-    fn resolve_declared(&self, owner_fqn: &str, ty: &TypeUse) -> TypeRes {
+    /// The value type of a written type, keeping element types of JDK containers.
+    fn recv_of(&self, file: &JavaFile, enclosing: Option<&str>, type_params: &[&str], ty: &TypeUse) -> RecvType {
+        match self.resolve_type(file, enclosing, type_params, &ty.name) {
+            TypeRes::Internal { fqn, evidence } => RecvType::Internal { fqn, evidence },
+            TypeRes::Unresolved => RecvType::Unknown,
+            TypeRes::External => match jdk_family(file, &ty.name) {
+                Some(family) => RecvType::Container {
+                    family,
+                    args: ty
+                        .args
+                        .iter()
+                        .map(|arg| match arg.as_str() {
+                            "" => RecvType::Unknown,
+                            arg => Self::type_res_to_recv(self.resolve_type(file, enclosing, type_params, arg)),
+                        })
+                        .collect(),
+                },
+                None => RecvType::External,
+            },
+        }
+    }
+
+    fn recv_in_scope(&self, scope: &Scope<'_>, ty: &TypeUse) -> RecvType {
+        self.recv_of(scope.file, Some(scope.type_fqn), &scope.type_params, ty)
+    }
+
+    /// The value type of a type written in a member declared on `owner_fqn` (a field type, a return
+    /// type), resolved with the declaring file's imports rather than the caller's.
+    fn recv_declared(&self, owner_fqn: &str, ty: &TypeUse) -> RecvType {
         match self.types.get(owner_fqn) {
             Some(owner) => {
                 let params: Vec<&str> = owner.decl.type_params.iter().map(String::as_str).collect();
-                self.resolve_type(owner.file, Some(owner_fqn), &params, &ty.name)
+                self.recv_of(owner.file, Some(owner_fqn), &params, ty)
             }
-            None => TypeRes::Unresolved,
+            None => RecvType::Unknown,
         }
     }
 
@@ -298,8 +505,13 @@ impl<'a> Index<'a> {
             }
             let (supers, has_external) = self.supertypes(&current);
             external_ancestor |= has_external;
-            if entry.decl.kind == SymbolKind::Class && entry.decl.extends.is_empty() {
-                external_ancestor = true; // implicit java.lang.Object
+            // Implicit supertypes outside the repository: java.lang.Object for a class without
+            // `extends`, java.lang.Enum (name(), ordinal(), compareTo()...) for every enum. An enum's
+            // synthetic static values()/valueOf() land here too.
+            if (entry.decl.kind == SymbolKind::Class && entry.decl.extends.is_empty())
+                || entry.decl.kind == SymbolKind::Enum
+            {
+                external_ancestor = true;
             }
             queue.extend(supers.into_iter().map(|(s, ..)| s));
         }
@@ -335,9 +547,77 @@ impl<'a> Index<'a> {
         self.type_id(owner_fqn).map(|id| field_id(id, field))
     }
 
+    fn local<'s>(scope: &'s Scope<'_>, name: &str) -> Option<&'s Local> {
+        scope.locals.iter().rev().find(|l| l.name == name)
+    }
+
+    /// Type of local `name`. Scopes are flattened per method, so two declarations of one name
+    /// (sibling blocks, two lambdas both calling their parameter `j`) cannot be told apart. The
+    /// local is typed only when every declaration gives the same type; otherwise it is unknown,
+    /// never whichever declaration came last.
+    fn local_recv(&self, scope: &Scope<'_>, name: &str, depth: usize) -> RecvType {
+        let declarations: Vec<&Local> = scope.locals.iter().filter(|l| l.name == name).collect();
+        let Some(first) = declarations.first() else {
+            return RecvType::Unknown;
+        };
+        let identical = |l: &&Local| {
+            l.ty.as_ref().map(|t| (&t.name, &t.args)) == first.ty.as_ref().map(|t| (&t.name, &t.args))
+                && l.init == first.init
+        };
+        if declarations.iter().all(identical) {
+            return self.declared_local_recv(scope, first, depth);
+        }
+        if declarations.len() > MAX_SAME_NAME_LOCALS {
+            return RecvType::Unknown;
+        }
+        let mut agreed: Option<(String, Evidence)> = None;
+        for local in declarations {
+            match self.declared_local_recv(scope, local, depth) {
+                RecvType::Internal { fqn, evidence } => match &mut agreed {
+                    None => agreed = Some((fqn, evidence)),
+                    Some((seen, seen_evidence)) if *seen == fqn => *seen_evidence = weaker(*seen_evidence, evidence),
+                    Some(_) => return RecvType::Unknown,
+                },
+                _ => return RecvType::Unknown,
+            }
+        }
+        agreed.map_or(RecvType::Unknown, |(fqn, evidence)| RecvType::Internal { fqn, evidence })
+    }
+
+    fn declared_local_recv(&self, scope: &Scope<'_>, local: &Local, depth: usize) -> RecvType {
+        match (&local.ty, &local.init) {
+            (Some(ty), _) => self.recv_in_scope(scope, ty),
+            // `var x = expr`: typed as the compiler would, from the declared type of what `expr`
+            // resolves to. The depth bound also stops flattened-scope cycles such as `var a = b.f()`
+            // in one block and `var b = a.g()` in another.
+            (None, Some(LocalInit::Expr(init))) => self.receiver_type(scope, init, depth + 1),
+            (None, Some(LocalInit::ElementOf(iterable))) => {
+                iteration_element(self.receiver_type(scope, iterable, depth + 1))
+            }
+            (None, Some(LocalInit::RecordComponent { record, index })) => match self.resolve_in_scope(scope, record) {
+                TypeRes::Internal { fqn, evidence } => {
+                    let component = self
+                        .types
+                        .get(&fqn)
+                        .filter(|e| e.decl.kind == SymbolKind::Record)
+                        .and_then(|entry| entry.decl.fields.iter().filter(|f| !f.is_static).nth(*index as usize));
+                    match component {
+                        Some(field) => weaken(self.recv_declared(&fqn, &field.ty), evidence),
+                        None => RecvType::Unknown,
+                    }
+                }
+                TypeRes::External => RecvType::External,
+                TypeRes::Unresolved => RecvType::Unknown,
+            },
+            (None, Some(LocalInit::LambdaParam { receiver, method, index })) => {
+                lambda_param(self.receiver_type(scope, receiver, depth + 1), method, *index)
+            }
+            (None, None) => RecvType::Unknown,
+        }
+    }
+
     fn local_type<'s>(scope: &'s Scope<'_>, name: &str) -> Option<&'s Option<TypeUse>> {
-        // Later declarations shadow earlier ones in the flattened scope.
-        scope.locals.iter().rev().find(|l| l.name == name).map(|l| &l.ty)
+        Self::local(scope, name).map(|l| &l.ty)
     }
 
     /// Field visible by simple name: the enclosing type's hierarchy, then lexically enclosing types.
@@ -369,9 +649,11 @@ impl<'a> Index<'a> {
     }
 
     fn receiver_type(&self, scope: &Scope<'_>, receiver: &Receiver, depth: usize) -> RecvType {
-        if depth > MAX_RECEIVER_DEPTH {
+        let fuel = scope.fuel.get();
+        if depth > MAX_RECEIVER_DEPTH || fuel == 0 {
             return RecvType::Unknown;
         }
+        scope.fuel.set(fuel - 1);
         match receiver {
             Receiver::Implicit | Receiver::This => {
                 RecvType::Internal { fqn: scope.type_fqn.to_owned(), evidence: Evidence::ResolvedExact }
@@ -381,14 +663,11 @@ impl<'a> Index<'a> {
                 _ => RecvType::External,
             },
             Receiver::Name(name) => {
-                if let Some(ty) = Self::local_type(scope, name) {
-                    return match ty {
-                        Some(ty) => Self::type_res_to_recv(self.resolve_in_scope(scope, &ty.name)),
-                        None => RecvType::Unknown,
-                    };
+                if Self::local(scope, name).is_some() {
+                    return self.local_recv(scope, name, depth);
                 }
                 if let Some((owner, field)) = self.field_in_scope(scope, name) {
-                    return Self::type_res_to_recv(self.resolve_declared(&owner, &field.ty));
+                    return self.recv_declared(&owner, &field.ty);
                 }
                 Self::type_res_to_recv(self.resolve_in_scope(scope, name))
             }
@@ -406,18 +685,13 @@ impl<'a> Index<'a> {
                 match self.receiver_type(scope, inner, depth + 1) {
                     RecvType::Internal { fqn, evidence } => match self.find_field(&fqn, name) {
                         Lookup::Found(found) => match found.into_iter().next() {
-                            Some((owner, field)) => match self.resolve_declared(&owner, &field.ty) {
-                                TypeRes::Internal { fqn, evidence: e } => {
-                                    RecvType::Internal { fqn, evidence: weaker(evidence, e) }
-                                }
-                                TypeRes::External => RecvType::External,
-                                TypeRes::Unresolved => RecvType::Unknown,
-                            },
+                            Some((owner, field)) => weaken(self.recv_declared(&owner, &field.ty), evidence),
                             None => RecvType::Unknown,
                         },
                         Lookup::External => RecvType::External,
                         Lookup::NotFound => RecvType::Unknown,
                     },
+                    RecvType::Container { .. } => RecvType::External,
                     other => other,
                 }
             }
@@ -432,18 +706,18 @@ impl<'a> Index<'a> {
                         if returns.any(|(_, r)| r.name != first.name) {
                             return RecvType::Unknown;
                         }
-                        match self.resolve_declared(owner, first) {
-                            TypeRes::Internal { fqn, evidence: e } => {
-                                RecvType::Internal { fqn, evidence: weaker(evidence, e) }
-                            }
-                            TypeRes::External => RecvType::External,
-                            TypeRes::Unresolved => RecvType::Unknown,
-                        }
+                        weaken(self.recv_declared(owner, first), evidence)
                     }
+                    CallRes::Accessor { owner, field, evidence } => {
+                        weaken(self.recv_declared(&owner, &field.ty), evidence)
+                    }
+                    CallRes::Container(result) => result,
                     CallRes::External => RecvType::External,
                     CallRes::Unresolved => RecvType::Unknown,
                 }
             }
+            // `new ArrayList<Job>()` keeps no type arguments in `Receiver::New`, so a container
+            // created inline is just external.
             Receiver::New(ty) => Self::type_res_to_recv(self.resolve_in_scope(scope, ty)),
             Receiver::Unknown => RecvType::Unknown,
         }
@@ -463,6 +737,7 @@ impl<'a> Index<'a> {
         let rule = match receiver {
             Receiver::This => "java.call.this",
             Receiver::Super => "java.call.super",
+            Receiver::Name(n) if Self::local(scope, n).is_some_and(|l| l.init.is_some()) => "java.call.var-inferred",
             Receiver::Name(n) if Self::local_type(scope, n).is_some() => "java.call.local",
             Receiver::Name(n) if self.field_in_scope(scope, n).is_some() => "java.call.field",
             Receiver::Name(_) => "java.call.static",
@@ -477,9 +752,17 @@ impl<'a> Index<'a> {
                     let overload = if methods.len() == 1 { Evidence::ResolvedExact } else { Evidence::StaticInferred };
                     CallRes::Targets { methods, evidence: weaker(evidence, overload), rule }
                 }
-                Lookup::External => CallRes::External,
-                Lookup::NotFound => CallRes::Unresolved,
+                // A record that implements an external interface has an external ancestor, so its
+                // components must be checked before concluding "external".
+                Lookup::External => self.record_accessor(&fqn, name, arity, evidence).unwrap_or(CallRes::External),
+                Lookup::NotFound => self.record_accessor(&fqn, name, arity, evidence).unwrap_or(CallRes::Unresolved),
             },
+            RecvType::Container { family, args } => {
+                match arity.and_then(|n| container_result(family, &args, name, n)) {
+                    Some(result) => CallRes::Container(result),
+                    None => CallRes::External,
+                }
+            }
             RecvType::External => CallRes::External,
             RecvType::Unknown => CallRes::Unresolved,
         }
@@ -494,8 +777,12 @@ impl<'a> Index<'a> {
                     let evidence = if methods.len() == 1 { Evidence::ResolvedExact } else { Evidence::StaticInferred };
                     return CallRes::Targets { methods, evidence, rule: "java.call.unqualified" };
                 }
-                Lookup::External => saw_external = true,
-                Lookup::NotFound => {}
+                lookup => {
+                    if let Some(accessor) = self.record_accessor(&fqn, name, arity, Evidence::ResolvedExact) {
+                        return accessor;
+                    }
+                    saw_external |= matches!(lookup, Lookup::External);
+                }
             }
             current = self.types.get(&fqn).and_then(|e| e.outer.clone());
         }
@@ -517,6 +804,18 @@ impl<'a> Index<'a> {
             }
         }
         if saw_external { CallRes::External } else { CallRes::Unresolved }
+    }
+
+    /// A record component `c` has an implicit accessor `c()`. Records are final, so only the record
+    /// itself can supply it; an explicitly declared `c()` is an ordinary method found earlier.
+    fn record_accessor(&self, fqn: &str, name: &str, arity: Option<u32>, evidence: Evidence) -> Option<CallRes<'a>> {
+        let entry = self.types.get(fqn)?;
+        if entry.decl.kind != SymbolKind::Record || arity.is_some_and(|n| n != 0) {
+            return None;
+        }
+        // Records cannot declare instance fields, so every non-static field is a component.
+        let field = entry.fields.get(name).copied().filter(|f| !f.is_static)?;
+        Some(CallRes::Accessor { owner: fqn.to_owned(), field, evidence })
     }
 
     fn constructors(&self, fqn: &str, arity: u32) -> Option<(Vec<SymbolId>, Evidence)> {
@@ -612,7 +911,8 @@ impl<'a> Index<'a> {
         );
 
         let type_params: Vec<&str> = decl.type_params.iter().map(String::as_str).collect();
-        let type_scope = Scope { file, type_fqn: &fqn, type_params: type_params.clone(), locals: &[] };
+        let type_scope =
+            Scope { file, type_fqn: &fqn, type_params: type_params.clone(), locals: &[], fuel: Cell::new(0) };
 
         for (super_fqn, kind, evidence, line) in self.supertypes(&fqn).0 {
             if let Some(super_id) = self.type_id(&super_fqn) {
@@ -685,7 +985,7 @@ impl<'a> Index<'a> {
 
             let mut params = type_params.clone();
             params.extend(method.type_params.iter().map(String::as_str));
-            let scope = Scope { file, type_fqn: &fqn, type_params: params, locals: &method.locals };
+            let scope = Scope { file, type_fqn: &fqn, type_params: params, locals: &method.locals, fuel: Cell::new(0) };
             let signature_types =
                 method.params.iter().map(|p| &p.ty).chain(method.return_type.iter()).chain(method.throws.iter());
             for ty in signature_types {
@@ -749,6 +1049,7 @@ impl<'a> Index<'a> {
     fn emit_refs(&self, scope: &Scope<'_>, from: &SymbolId, refs: &[BodyRef], out: &mut Output) {
         let path = &scope.file.path;
         for reference in refs {
+            scope.fuel.set(RECEIVER_FUEL);
             match reference {
                 BodyRef::Call { receiver, name, arity, line } => {
                     match self.resolve_call(scope, receiver, name, Some(*arity), 0) {
@@ -759,8 +1060,24 @@ impl<'a> Index<'a> {
                                 }
                             }
                         }
-                        CallRes::External => {}
-                        CallRes::Unresolved => out.unresolved(from, path, *line, format!("call {name}/{arity}")),
+                        CallRes::Accessor { owner, field, evidence } => {
+                            if let Some(target) = self.field_symbol(&owner, field) {
+                                out.edge(
+                                    from,
+                                    &target,
+                                    EdgeKind::References,
+                                    evidence,
+                                    path,
+                                    *line,
+                                    "java.record.accessor",
+                                );
+                            }
+                        }
+                        CallRes::Container(_) | CallRes::External => {}
+                        CallRes::Unresolved if self.member_names.contains(name.as_str()) => {
+                            out.unresolved(from, path, *line, format!("call {name}/{arity}"));
+                        }
+                        CallRes::Unresolved => {}
                     }
                     self.emit_receiver_field_refs(scope, from, receiver, *line, out);
                 }
@@ -917,12 +1234,48 @@ impl<'a> Index<'a> {
     }
 }
 
+/// The JDK container a type name denotes in `file`, if any. A simple name counts only when it is
+/// imported from the JDK package (singly or on demand), or is `java.lang.Iterable`; a same-named
+/// type from another library must not borrow `java.util` semantics. Callers have already ruled out
+/// in-repository types of that name.
+fn jdk_family(file: &JavaFile, name: &str) -> Option<Family> {
+    let lookup = |package: &str, simple: &str| {
+        JDK_CONTAINERS.iter().find(|(p, n, _)| *p == package && *n == simple).map(|(_, _, family)| *family)
+    };
+    if let Some((package, simple)) = name.rsplit_once('.') {
+        return lookup(package, simple);
+    }
+    let single = file.imports.iter().find(|i| !i.is_static && !i.wildcard && last_segment(&i.path) == name);
+    if let Some(import) = single {
+        let (package, simple) = import.path.rsplit_once('.')?;
+        return lookup(package, simple);
+    }
+    if let Some(family) = lookup("java.lang", name) {
+        return Some(family);
+    }
+    let mut on_demand =
+        file.imports.iter().filter(|i| !i.is_static && i.wildcard).filter_map(|i| lookup(&i.path, name));
+    on_demand.next()
+}
+
 fn is_test_method(method: &MethodDecl) -> bool {
     method.annotations.iter().any(|a| TEST_ANNOTATIONS.contains(&last_segment(&a.name)))
 }
 
 enum CallRes<'a> {
-    Targets { methods: Vec<(String, &'a MethodDecl)>, evidence: Evidence, rule: &'static str },
+    Targets {
+        methods: Vec<(String, &'a MethodDecl)>,
+        evidence: Evidence,
+        rule: &'static str,
+    },
+    /// The implicit accessor of a record component: the component is the dependency.
+    Accessor {
+        owner: String,
+        field: &'a FieldDecl,
+        evidence: Evidence,
+    },
+    /// A JDK container method returning an element: no in-repo target, but a typed result.
+    Container(RecvType),
     External,
     Unresolved,
 }

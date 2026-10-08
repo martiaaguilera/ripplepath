@@ -32,6 +32,10 @@ pub struct Import {
 pub struct TypeUse {
     pub name: String,
     pub line: u32,
+    /// Erased top-level type arguments (`Map<UUID, List<Job>>` gives `UUID`, `List`). Empty for
+    /// a non-generic or raw type; an empty string for an argument that names no single type
+    /// (`?`, `? super T`, arrays). Only used to type elements of well-known JDK containers.
+    pub args: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +110,23 @@ pub struct Local {
     /// `None` when declared with `var` and the initializer type is not syntactically obvious, or
     /// for lambda parameters with inferred types.
     pub ty: Option<TypeUse>,
+    /// Where the type of a `var` comes from when it is not syntactically evident. Never set when
+    /// `ty` is.
+    pub init: Option<LocalInit>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LocalInit {
+    /// `var x = <expr>`: typed from the declared return/field type of what `expr` resolves to.
+    Expr(Receiver),
+    /// `for (var x : <expr>)`: typed as an element of the container `expr` resolves to.
+    ElementOf(Receiver),
+    /// Parameter `index` of a lambda passed to `<receiver>.<method>(...)`, e.g. `j` in
+    /// `jobs.forEach(j -> ...)`: typed from the container `receiver` resolves to.
+    LambdaParam { receiver: Receiver, method: String, index: u32 },
+    /// Component `index` of a record pattern `case Rec(var a, var b)`: typed as the record's
+    /// component. `record` is the type name as written in the pattern.
+    RecordComponent { record: String, index: u32 },
 }
 
 /// The expression a member is accessed on, reduced to what static resolution can use.
