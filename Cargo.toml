@@ -45,6 +45,7 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 quick-xml = "0.42.0"
 globset = "0.4.20"
 serde-saphyr = "1.3.0"
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
