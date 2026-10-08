@@ -194,8 +194,15 @@ export function Inspector({ report, selection, onSelectSymbol, onOpenFile }: Pro
       )}
 
       <h3 className="inspector__subtitle">Test evidence</h3>
+      {test && (
+        <p>
+          Recommended test <TierBadge tier={test.tier} /> <span className="muted">{evidenceKind(test)}</span>
+        </p>
+      )}
       {testsThrough.length === 0 ? (
-        <p className="muted">No recommended test reaches this symbol, statically or by measured coverage.</p>
+        test ? null : (
+          <p className="muted">No recommended test reaches this symbol, statically or by measured coverage.</p>
+        )
       ) : (
         <ul className="plain-list inspector__tests">
           {testsThrough.map((t) => (

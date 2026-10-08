@@ -1170,16 +1170,6 @@ button.loc {
   text-align: center;
 }
 
-.viewnav__key {
-  padding: 0 4px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  color: var(--text-muted);
-  font-family: var(--mono);
-  font-size: 10px;
-  line-height: 15px;
-}
-
 .content {
   display: flex;
   flex: 1;
@@ -2614,10 +2604,6 @@ button.loc {
   .page--diff > .changed {
     position: static;
     height: auto;
-  }
-
-  .viewnav__key {
-    display: none;
   }
 
   .revisions input {
