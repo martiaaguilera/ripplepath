@@ -1,6 +1,6 @@
 # Benchmarks
 
-Measured on 2026-10-09 at commit `13399df` (clean worktree). Raw output of that run, unedited:
+Measured on 2026-10-09 at commit `13399df` (clean worktree). Raw output of that run, unedited except that the local path of the QuantaRun clone in `real.json` is replaced by a placeholder:
 [`docs/benchmarks/2026-10-09/`](benchmarks/2026-10-09/). Every number below comes from those files;
 ratios are computed from them. Nothing here compares Ripplepath with other tools.
 

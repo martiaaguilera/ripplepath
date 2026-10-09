@@ -9,7 +9,7 @@
       "spec": "3b9ec7d"
     },
     "kind": "repository",
-    "path": "C:/Users/Marti/Documents/projectesCV/quantarun"
+    "path": "<local QuantaRun clone>"
   },
   "harness": {
     "cold_index_warmup_runs": 1,
