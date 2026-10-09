@@ -231,6 +231,10 @@ enum DemoFixture {
 /// The demo fixtures, embedded at build time (see build.rs): the demo never reads the current
 /// directory, so running it inside an untrusted checkout cannot substitute that checkout's files.
 mod demo_fixtures {
+    /// (repository path, contents) of one file.
+    type File = (&'static str, &'static [u8]);
+    /// (snapshot name, files) in commit order.
+    type Snapshots = &'static [(&'static str, &'static [File])];
     include!(concat!(env!("OUT_DIR"), "/demo_fixtures.rs"));
 }
 
