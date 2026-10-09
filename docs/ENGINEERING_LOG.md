@@ -2,6 +2,20 @@
 
 Meaningful discoveries only, newest first.
 
+## 2026-10-09 — Final adversarial review
+
+Seven findings, all fixed with regression tests; details in docs/FINAL_REVIEW.md. The two that
+changed how I think about the design:
+
+**Uncertainty must widen, including "we did not look".** A change touching only a Kotlin file
+produced zero changed symbols, and an empty change set read as "nothing to test". The rule
+"uncertainty broadens recommendations" has to cover files the tool does not analyse, not only
+constructs it fails to resolve: they now raise `UNSUPPORTED_FILE_CHANGED`.
+
+**Failures are not facts.** The fact cache stored parse timeouts as if they were properties of
+the blob. A timeout depends on machine load, so caching it broke incremental == clean. Only pure
+functions of the input belong in a content-addressed cache.
+
 ## 2026-10-08 — Web UI: six views over the report, diff endpoint, real screenshots
 
 **Unstyled is invisible to every gate.** The salvaged views typechecked, linted and built, yet about

@@ -34,6 +34,9 @@ Status: controls listed here are implemented and tested unless marked *planned*.
 | Malicious XML (coverage/JUnit) | Any entity declaration is refused (no DTD/entity expansion, no external entities); only predefined entities and character references are decoded; 64 MiB per input, at most 5,000,000 elements and depth 128. | `refuses_entity_declarations_and_malformed_input` (`crates/evidence`) |
 | Forged index shipped inside an analysed repository | The default index lives in the user cache directory (keyed by canonical repo path), never in the working tree; the index is trusted local state. | `default_db` |
 | Escape sequences in stored values reaching the terminal | Stored values in errors are escaped and truncated; all CLI error output is neutralised. | `corrupt`, CLI `main` |
+| Demo built from an untrusted checkout | `ripplepath demo` uses fixtures embedded at build time, never the current directory; the fixture builder's `git` runs without global/system config, with fsmonitor off and no hooks directory. | `crates/cli/tests/demo_cli.rs` |
+| UI scripts substituted by the current directory | `serve` defaults to the build's own `web/dist`; another directory needs an explicit `--web-dir`. | review (docs/FINAL_REVIEW.md #5) |
+| Unbounded read from a FIFO or device passed as a report | Reads are bounded by `take(limit + 1)`, not by the size metadata reports. | review (docs/FINAL_REVIEW.md #7) |
 | Source leakage via logs | Logs contain revision specs, counts and timings; never file contents. | review |
 
 ## Non-goals
