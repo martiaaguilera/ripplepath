@@ -1,0 +1,9 @@
+{
+  "arch": "x86_64",
+  "available_parallelism": 8,
+  "cpu_model": "Intel(R) Core(TM) i7-6700HQ CPU @ 2.60GHz",
+  "logical_cpus": 8,
+  "memory_bytes": 21359263744,
+  "os": "Microsoft Windows 11 Home 10.0.26200",
+  "physical_cores": 4
+}

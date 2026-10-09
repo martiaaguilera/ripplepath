@@ -378,8 +378,9 @@ test that reproduced the bug first:
 - **Benchmarks:** the harness lives in `crates/bench`. Each timed run happens in a fresh process,
   so "cold" really is cold and peak memory belongs to that run. `scripts/bench.sh` runs it, and
   `.github/workflows/bench.yml` runs it weekly, never as a merge gate. Quote numbers only from
-  [BENCHMARKS.md](BENCHMARKS.md). From dogfooding: a QuantaRun cold index took a median of 1.46 s,
-  and a no-change re-index 0.70 s, on a 4-core laptop (orders of magnitude only).
+  [BENCHMARKS.md](BENCHMARKS.md): on a 4-core laptop, a QuantaRun cold index took a median of
+  646 ms and a no-change re-index 245 ms; a 20,000-file synthetic repository took 15.5 s cold, and
+  an impact query stayed near 18 µs (p50) at every size.
 
 ### 3.20 The biggest real bugs (pick two or three)
 

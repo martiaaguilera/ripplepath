@@ -279,9 +279,14 @@ that matter for speed:
 - Resolution is a pure in-memory pass over the whole snapshot.
 - Traversal and storage are bounded (see the bounds table in ARCHITECTURE.md).
 
-On QuantaRun (263 source files), the dogfooding run measured a cold `index` in a median of 1.46 s
-and an `analyze` in 0.9 s on a 4-core laptop. Those are orders of magnitude, not benchmarks
-([docs/DOGFOODING_QUANTARUN.md](docs/DOGFOODING_QUANTARUN.md)).
+Headline medians from the 2026-10-09 run (Intel i7-6700HQ laptop, Windows 11, library call only):
+
+- Synthetic 20,000 files (167,400 symbols, 421,306 edges): cold `index` 15.5 s, re-index of an
+  unchanged revision 6.0 s, peak RSS 835 MiB, database 276 MiB.
+- Impact query from one symbol: p50 17–18 µs and p95 0.87–0.94 ms at 1,000, 5,000 and 20,000
+  files alike.
+- QuantaRun (260 source files): cold `index` 646 ms, `analyze cb13484..3b9ec7d` 493 ms without a
+  database and 328 ms with one.
 
 ## Security model
 

@@ -189,7 +189,7 @@ Regression tests: `crates/lang/tests/java_modern_idioms.rs`, `crates/lang/tests/
 - Edge lines for a multi-line call chain point at the first line of the chain, not the line of the
   member called.
 
-## Performance (for the record; BENCHMARKS.md is owned elsewhere)
+## Performance (CLI wall-clock, for the record; measured benchmarks are in [BENCHMARKS.md](BENCHMARKS.md))
 
 Release build, Intel Core i7-6700HQ (4 cores / 8 threads, 2.6 GHz), 19.9 GB RAM, NVMe SSD,
 Windows 11. Median of 5 wall-clock runs, measured with no other build running:

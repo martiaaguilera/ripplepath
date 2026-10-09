@@ -1,0 +1,6 @@
+date_utc: 2026-10-09T13:52:26Z
+ripplepath_commit: 13399dfcb36d998ae62a0de0a05435872aa400ea
+worktree_dirty_files: 0
+rustc: rustc 1.99.0 (b940084d7 2026-09-28)
+build: cargo build --release --locked -p ripplepath-bench
+sizes: 1000 5000 20000  seed: 42  iterations: 5  queries: 1000
