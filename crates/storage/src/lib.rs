@@ -59,6 +59,12 @@ impl Store {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        // Fact payloads average a few KiB, so most live on overflow pages, which SQLite reads with
+        // one read call each, bypassing its page cache. A warm 20k-file index made 20k of them and
+        // spent seconds in the kernel (docs/BENCHMARKS.md); reading through a bounded memory map
+        // made those lookups several times faster. Pages are file-backed, so the OS can reclaim
+        // them; the cap bounds the address space, not correctness.
+        conn.pragma_update(None, "mmap_size", 268_435_456)?;
         let current: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if current > SCHEMA_VERSION {
             return Err(StorageError::TooNew { found: current, supported: SCHEMA_VERSION });
