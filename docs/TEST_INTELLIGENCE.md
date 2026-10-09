@@ -137,9 +137,11 @@ A full-suite decision still lists the recommended tests as the best place to sta
 | `NO_TEST_EVIDENCE` | high | non-test code changed and no test is recommended |
 | `CHANGED_CODE_WITHOUT_COVERAGE` | medium | coverage is loaded and a modified symbol is `NOT_COVERED` or `NO_DATA` |
 | `STALE_COVERAGE` | medium | a used coverage report was measured at a commit other than base or head |
+| `UNSUPPORTED_FILE_CHANGED` | medium | source code in a language that is not analysed changed (Kotlin, Scala, Groovy, Vue/Svelte/Astro components, Python, Go, Rust, C/C++, .NET, Ruby, PHP, Swift, Dart, Elixir, Clojure): its dependents are unknown |
 
-Low-severity uncertainty (e.g. a changed file in an unsupported language) never widens the
-selection, so the `UNSUPPORTED_FILE_CHANGED` code exists but is not currently emitted.
+Low-severity uncertainty (a changed README, image or other non-code file) never widens the
+selection. Before the final review a Kotlin-only change produced zero recommended tests and a
+`SELECTED` decision even in conservative mode; it now raises `UNSUPPORTED_FILE_CHANGED`.
 
 On the fixtures: the Java change adds `V2__account_frozen.sql`, so `BALANCED` and `CONSERVATIVE`
 decide `FULL_SUITE` (`MIGRATION_CHANGED`); the TypeScript change only has medium reasons, so

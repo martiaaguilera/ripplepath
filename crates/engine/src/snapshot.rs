@@ -63,8 +63,11 @@ type CacheKey = (ObjectId, String);
 ///
 /// Blob ids are content hashes, so a file unchanged between base and head — or between two runs —
 /// is parsed once. The path is part of the key because facts record it and TypeScript module
-/// resolution depends on it. Failures are cached too: re-parsing a file that timed out would
-/// just time out again.
+/// resolution depends on it. Failures are cached in memory for the run (base and head share
+/// unchanged files, and re-parsing a file that just timed out would time out again) but are never
+/// persisted: every extraction failure is a wall-clock timeout or a grammar load error, neither a
+/// property of the file, and a stored timeout from a loaded machine would make every later run
+/// differ from a clean one.
 ///
 /// With a [`Store`] attached, results also persist across runs: that is what makes re-indexing
 /// after a small change cheap. Persisted entries are keyed by extractor version, so a new extractor
@@ -114,9 +117,9 @@ impl FactCache {
         let cached = store.cached_facts(&key.0.to_string(), &key.1, extractor_key(language));
         let restored = match cached {
             Ok(Some(CachedFacts::Ok(bytes))) => decode(language, &bytes).map(Ok),
-            Ok(Some(CachedFacts::Error(message))) => Some(Err(message)),
-            // A read error or an undecodable entry is a cache miss: parsing again is always correct.
-            Ok(None) | Err(_) => None,
+            // Failures stored by earlier versions are not trusted (see the type's comment); a read
+            // error or an undecodable entry is a cache miss too: parsing again is always correct.
+            Ok(Some(CachedFacts::Error(_)) | None) | Err(_) => None,
         };
         match restored {
             Some(result) => {
@@ -131,7 +134,7 @@ impl FactCache {
         if self.store.is_some() {
             let entry = match &result {
                 Ok(facts) => encode(facts).map(CachedFacts::Ok),
-                Err(message) => Some(CachedFacts::Error(message.clone())),
+                Err(_) => None,
             };
             if let Some(entry) = entry {
                 self.pending.push((key.0.to_string(), key.1.clone(), extractor_key(language).to_owned(), entry));
@@ -188,6 +191,31 @@ pub(crate) fn language_of(path: &str) -> Option<Language> {
         Some("js" | "jsx" | "mjs" | "cjs") => Some(Language::JavaScript),
         _ => None,
     }
+}
+
+/// Source code in a language Ripplepath does not analyse. A change to it can break code and tests
+/// through edges the graph does not have, so it is uncertainty that widens the test selection, not
+/// a footnote like a changed README.
+pub(crate) fn unanalysed_source_language(path: &str) -> Option<&'static str> {
+    let ext = path.rsplit_once('.').map(|(_, ext)| ext)?;
+    Some(match ext {
+        "kt" | "kts" => "Kotlin",
+        "scala" | "sc" => "Scala",
+        "groovy" | "gvy" => "Groovy",
+        "vue" | "svelte" | "astro" => "a web component format",
+        "py" => "Python",
+        "go" => "Go",
+        "rs" => "Rust",
+        "c" | "h" | "cc" | "cpp" | "cxx" | "hpp" => "C/C++",
+        "cs" | "fs" => ".NET",
+        "rb" => "Ruby",
+        "php" => "PHP",
+        "swift" => "Swift",
+        "dart" => "Dart",
+        "ex" | "exs" => "Elixir",
+        "clj" | "cljs" => "Clojure",
+        _ => return None,
+    })
 }
 
 /// Dependencies checked into the tree and minified bundles are not the repository's own code;

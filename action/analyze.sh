@@ -46,6 +46,13 @@ echo "::stop-commands::$token"
 status=$?
 echo "::$token::"
 
+# Status 2 means "policy FAIL" only when a report was written; anything else (an older binary's
+# usage error, a crash) is an error, never a verdict.
+if [ "$status" -eq 2 ] && [ ! -s "$out/analysis.json" ]; then
+  echo "::error title=Ripplepath: analysis failed::ripplepath exited with status 2 but wrote no analysis.json; see the log above."
+  status=1
+fi
+
 echo "exit-code=$status" >> "$GITHUB_OUTPUT"
 echo "output-dir=$out" >> "$GITHUB_OUTPUT"
 if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then

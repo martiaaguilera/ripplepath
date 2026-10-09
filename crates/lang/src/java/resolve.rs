@@ -486,11 +486,12 @@ impl<'a> Index<'a> {
         (internal, has_external)
     }
 
-    /// Breadth-first over the in-repo hierarchy; members found on the nearest level win, which
-    /// approximates Java's "most specific declaration" without full overload resolution.
-    fn find_member<T>(&self, fqn: &str, mut select: impl FnMut(&TypeEntry<'a>) -> Vec<T>) -> Lookup<(String, T)> {
+    /// `fqn` and its in-repo supertypes, breadth-first (nearest first), and whether the hierarchy
+    /// reaches a type outside the repository.
+    fn hierarchy(&self, fqn: &str) -> (Vec<(String, &TypeEntry<'a>)>, bool) {
         let mut queue = VecDeque::from([fqn.to_owned()]);
         let mut seen = BTreeSet::new();
+        let mut levels = Vec::new();
         let mut external_ancestor = false;
         while let Some(current) = queue.pop_front() {
             if !seen.insert(current.clone()) {
@@ -499,10 +500,6 @@ impl<'a> Index<'a> {
             let Some(entry) = self.types.get(&current) else {
                 continue;
             };
-            let found = select(entry);
-            if !found.is_empty() {
-                return Lookup::Found(found.into_iter().map(|m| (current.clone(), m)).collect());
-            }
             let (supers, has_external) = self.supertypes(&current);
             external_ancestor |= has_external;
             // Implicit supertypes outside the repository: java.lang.Object for a class without
@@ -514,20 +511,45 @@ impl<'a> Index<'a> {
                 external_ancestor = true;
             }
             queue.extend(supers.into_iter().map(|(s, ..)| s));
+            levels.push((current, entry));
+        }
+        (levels, external_ancestor)
+    }
+
+    /// Breadth-first over the in-repo hierarchy; members found on the nearest level win, which
+    /// is Java's rule for fields (hiding).
+    fn find_member<T>(&self, fqn: &str, mut select: impl FnMut(&TypeEntry<'a>) -> Vec<T>) -> Lookup<(String, T)> {
+        let (levels, external_ancestor) = self.hierarchy(fqn);
+        for (current, entry) in levels {
+            let found = select(entry);
+            if !found.is_empty() {
+                return Lookup::Found(found.into_iter().map(|m| (current.clone(), m)).collect());
+            }
         }
         if external_ancestor { Lookup::External } else { Lookup::NotFound }
     }
 
+    /// Every method of the hierarchy with this name and a compatible arity, nearest declaration of
+    /// each signature only (a same-signature declaration further up is overridden, not a
+    /// candidate). Java overload resolution chooses among inherited methods too, so a same-arity
+    /// overload in a supertype is a second candidate and the call is no longer exact.
     fn find_methods(&self, fqn: &str, name: &str, arity: Option<u32>) -> Lookup<(String, &'a MethodDecl)> {
-        let lookup = self.find_member(fqn, |entry| {
-            entry
-                .methods
-                .get(name)
-                .map_or_else(Vec::new, |ms| ms.iter().copied().filter(|m| arity_matches(m, arity)).collect())
-        });
-        match lookup {
-            Lookup::NotFound if OBJECT_METHODS.contains(&name) => Lookup::External,
-            other => other,
+        let (levels, external_ancestor) = self.hierarchy(fqn);
+        let mut signatures = BTreeSet::new();
+        let mut found = Vec::new();
+        for (current, entry) in levels {
+            for method in entry.methods.get(name).into_iter().flatten().copied() {
+                if arity_matches(method, arity) && signatures.insert(method.signature()) {
+                    found.push((current.clone(), method));
+                }
+            }
+        }
+        if !found.is_empty() {
+            Lookup::Found(found)
+        } else if external_ancestor || OBJECT_METHODS.contains(&name) {
+            Lookup::External
+        } else {
+            Lookup::NotFound
         }
     }
 

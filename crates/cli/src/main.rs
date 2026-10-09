@@ -72,9 +72,12 @@ enum Command {
         /// Address to bind. Binding beyond localhost exposes source code to the network.
         #[arg(long, default_value = "127.0.0.1:7878")]
         addr: std::net::SocketAddr,
-        /// Built web UI directory.
-        #[arg(long, default_value = "web/dist")]
-        web_dir: PathBuf,
+        /// Built web UI directory [default: `web/dist` of the source tree this binary was built
+        /// from]. Never resolved against the current directory: `ripplepath serve` run inside a
+        /// project with its own `web/dist` would otherwise serve that project's scripts as the UI,
+        /// on the same origin as the API.
+        #[arg(long)]
+        web_dir: Option<PathBuf>,
         /// Revisions the UI opens with.
         #[arg(long, default_value = "HEAD~1")]
         base: String,
@@ -225,12 +228,25 @@ enum DemoFixture {
     TypescriptCheckout,
 }
 
+/// The demo fixtures, embedded at build time (see build.rs): the demo never reads the current
+/// directory, so running it inside an untrusted checkout cannot substitute that checkout's files.
+mod demo_fixtures {
+    include!(concat!(env!("OUT_DIR"), "/demo_fixtures.rs"));
+}
+
 impl DemoFixture {
-    fn dir_name(self) -> &'static str {
-        match self {
-            Self::JavaBanking => "java-banking",
-            Self::TypescriptCheckout => "typescript-checkout",
-        }
+    fn snapshots(self) -> Vec<fixture::Snapshot> {
+        let embedded = match self {
+            Self::JavaBanking => demo_fixtures::JAVA_BANKING,
+            Self::TypescriptCheckout => demo_fixtures::TYPESCRIPT_CHECKOUT,
+        };
+        embedded
+            .iter()
+            .map(|(name, files)| fixture::Snapshot {
+                name: (*name).to_owned(),
+                files: files.iter().map(|(path, bytes)| ((*path).to_owned(), bytes.to_vec())).collect(),
+            })
+            .collect()
     }
 }
 
@@ -249,7 +265,16 @@ enum Outcome {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    // clap exits with status 2 on a usage error, which is the policy-FAIL status: a CI job with a
+    // misspelled `--mode` would then look like a policy failure (or pass, with fail-on-policy
+    // off) without any analysis having run. Usage errors are ordinary errors here.
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            let _ = error.print();
+            return if error.use_stderr() { ExitCode::FAILURE } else { ExitCode::SUCCESS };
+        }
+    };
     init_tracing(cli.verbose);
     match run(cli.command) {
         Ok(Outcome::Done) => ExitCode::SUCCESS,
@@ -469,6 +494,7 @@ fn run_other(command: Command) -> Result<(), String> {
             if !addr.ip().is_loopback() {
                 eprintln!("warning: listening on {addr}; anyone who can reach it can read analysed source metadata");
             }
+            let web_dir = web_dir.unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/dist"));
             let web_dir = if web_dir.join("index.html").is_file() {
                 Some(web_dir)
             } else {
@@ -504,9 +530,7 @@ fn run_other(command: Command) -> Result<(), String> {
             if dir.exists() {
                 return Err(format!("{} already exists; choose another --dir", dir.display()));
             }
-            let fixtures = demo_fixture_root(fixture.dir_name())?;
-            fixture::build_fixture_repo(&[&fixtures.join("v1"), &fixtures.join("v2")], &dir)
-                .map_err(|e| e.to_string())?;
+            fixture::build_repo_from_snapshots(&fixture.snapshots(), &dir).map_err(|e| e.to_string())?;
             let report = analyze(&AnalyzeOptions::new(&dir, "main~1", "main")).map_err(|e| e.to_string())?;
             emit(&report, format, None)?;
             eprintln!(
@@ -521,11 +545,21 @@ fn run_other(command: Command) -> Result<(), String> {
 
 /// Evidence files come from CI artifacts; bounded before parsing.
 fn read_input(path: &Path) -> Result<String, String> {
-    let size = std::fs::metadata(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?.len();
-    if size > ripplepath_evidence_limit() {
+    use std::io::Read;
+    let error = |e: std::io::Error| format!("cannot read {}: {e}", path.display());
+    let limit = ripplepath_evidence_limit();
+    let size = std::fs::metadata(path).map_err(error)?.len();
+    if size > limit {
         return Err(format!("{} is {size} bytes, above the input limit", path.display()));
     }
-    std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))
+    // The metadata size of a pipe or device (`/dev/zero`, a FIFO) is 0; the read itself is bounded
+    // too so such an input cannot grow memory without limit.
+    let mut text = String::new();
+    std::fs::File::open(path).map_err(error)?.take(limit + 1).read_to_string(&mut text).map_err(error)?;
+    if text.len() as u64 > limit {
+        return Err(format!("{} is above the {limit} byte input limit", path.display()));
+    }
+    Ok(text)
 }
 
 fn ripplepath_evidence_limit() -> u64 {
@@ -546,16 +580,6 @@ fn default_db(repo: &Path) -> Result<PathBuf, String> {
         .ok_or("no cache directory found; pass --db or set RIPPLEPATH_CACHE_DIR")?;
     let key = blake3::hash(canonical.to_string_lossy().as_bytes()).to_hex();
     Ok(base.join(format!("{}.db", &key[..16])))
-}
-
-/// The demo ships with the source tree; look next to the binary's workspace or the current dir.
-fn demo_fixture_root(name: &str) -> Result<PathBuf, String> {
-    let candidates =
-        [Path::new("fixtures").join(name), Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures").join(name)];
-    candidates
-        .into_iter()
-        .find(|p| p.join("v1").is_dir())
-        .ok_or_else(|| "demo fixtures not found; run from the Ripplepath source directory".to_owned())
 }
 
 fn emit(report: &AnalysisReport, format: Format, output: Option<&Path>) -> Result<(), String> {
